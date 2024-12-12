@@ -24,6 +24,7 @@ mongoose
 
 //Define Mongoose Schema
 const blogPostSchema = new mongoose.Schema({
+	id: Number, // Added the id field
 	title: String,
 	excerpt: String,
 	content: String,
@@ -83,6 +84,7 @@ app.delete("/api/posts/:id", async (req, res) => {
 
 // Users Routes
 const userSchema = new mongoose.Schema({
+	id: Number, // Added the id field for users
 	username: String,
 	name: String,
 	email: String,
