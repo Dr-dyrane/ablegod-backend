@@ -60,6 +60,30 @@ app.post("/api/posts", async (req, res) => {
 	}
 });
 
+// Login
+app.post("/api/login", async (req, res) => {
+	const { username, password } = req.body;
+	try {
+		const user = await User.findOne({ username });
+		if (user && user.password === password) {
+			res.json({
+				success: true,
+				message: "Login successful",
+				user: {
+					id: user.id,
+					role: user.role,
+				},
+			});
+		} else {
+			res
+				.status(401)
+				.json({ success: false, message: "Invalid username or password" });
+		}
+	} catch (error) {
+		res.status(500).json({ success: false, message: "Internal server error" });
+	}
+});
+
 app.put("/api/posts/:id", async (req, res) => {
 	try {
 		const updatedPost = await BlogPost.findByIdAndUpdate(
