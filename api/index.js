@@ -31,18 +31,11 @@ const blogPostSchema = new mongoose.Schema({
 	category: String,
 	date: String,
 	readTime: String,
-	comments: [
-		{
-			id: Number,
-			text: String,
-			author: String,
-			date: String,
-		},
-	],
+    comments: {type: Number, default: 0},
 	image: String,
 	author: String,
 	status: String,
-	likes: { type: Number, default: 0 },
+    likes: { type: Number, default: 0 }
 });
 
 //Define Mongoose Model
@@ -90,60 +83,60 @@ app.delete("/api/posts/:id", async (req, res) => {
 	}
 });
 
-// Like Route
-app.post("/api/posts/:id/like", async (req, res) => {
-	try {
-		const post = await BlogPost.findById(req.params.id);
-		if (post) {
-			post.likes += 1;
-			await post.save();
-			res.status(200).json({ message: "Post liked successfully" });
-		} else {
-			res.status(404).json({ error: "Post not found" });
-		}
-	} catch (error) {
-		console.error("Error liking blog post:", error);
-		res.status(500).json({ error: "Error liking blog post" });
-	}
-});
+ // Like Route
+ app.post('/api/posts/:id/like', async (req, res) => {
+    try {
+      const post = await BlogPost.findById(req.params.id);
+      if (post) {
+        post.likes += 1;
+        await post.save();
+        res.status(200).json({ message: 'Post liked successfully' });
+      } else {
+        res.status(404).json({ error: 'Post not found' });
+      }
+    } catch (error) {
+      console.error("Error liking blog post:", error);
+      res.status(500).json({ error: 'Error liking blog post' });
+    }
+  });
+  
+  app.delete('/api/posts/:id/like', async (req, res) => {
+    try {
+      const post = await BlogPost.findById(req.params.id);
+      if (post && post.likes > 0) {
+        post.likes -= 1;
+        await post.save();
+        res.status(200).json({ message: 'Post unliked successfully' });
+      } else {
+        res.status(404).json({ error: 'Post not found or has no likes' });
+      }
+    } catch (error) {
+      console.error("Error unliking blog post:", error);
+       res.status(500).json({ error: 'Error unliking blog post' });
+    }
+  });
 
-app.delete("/api/posts/:id/like", async (req, res) => {
-	try {
-		const post = await BlogPost.findById(req.params.id);
-		if (post && post.likes > 0) {
-			post.likes -= 1;
-			await post.save();
-			res.status(200).json({ message: "Post unliked successfully" });
-		} else {
-			res.status(404).json({ error: "Post not found or has no likes" });
-		}
-	} catch (error) {
-		console.error("Error unliking blog post:", error);
-		res.status(500).json({ error: "Error unliking blog post" });
-	}
-});
-
-// Comments Route
-app.post("/api/posts/:id/comments", async (req, res) => {
-	try {
-		const post = await BlogPost.findById(req.params.id);
-		if (post) {
-			const newComment = {
-				id: Date.now(),
-				...req.body,
-				date: new Date().toLocaleDateString(),
-			};
-			post.comments.push(newComment);
-			await post.save();
-			res.status(201).json(newComment); // Respond with the new comment
-		} else {
-			res.status(404).json({ error: "Post not found" });
-		}
-	} catch (error) {
-		console.error("Error adding comment to blog post:", error);
-		res.status(500).json({ error: "Error adding comment to blog post" });
-	}
-});
+   // Comments Route
+    app.post('/api/posts/:id/comments', async (req, res) => {
+        try {
+            const post = await BlogPost.findById(req.params.id);
+            if (post) {
+              const newComment = {
+                    id: Date.now(),
+                    ...req.body,
+                    date: new Date().toLocaleDateString()
+                };
+                post.comments += 1;
+                await post.save();
+                res.status(201).json(newComment);
+            } else {
+                res.status(404).json({ error: 'Post not found' });
+              }
+        } catch (error) {
+            console.error("Error adding comment to blog post:", error);
+            res.status(500).json({ error: 'Error adding comment to blog post' });
+        }
+  });
 
 // Users Routes
 const userSchema = new mongoose.Schema({
