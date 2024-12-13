@@ -48,7 +48,7 @@ router.delete("/:id", async (req, res) => {
 // Like Route
 router.post("/:id/like", async (req, res) => {
 	try {
-		const post = await BlogPost.findById(req.params.id);
+		const post = await BlogPost.findOne({ id: Number(req.params.id) });
 		if (post) {
 			post.likes += 1;
 			await post.save();
@@ -64,7 +64,7 @@ router.post("/:id/like", async (req, res) => {
 
 router.delete("/:id/like", async (req, res) => {
 	try {
-		const post = await BlogPost.findById(req.params.id);
+		const post = await BlogPost.findOne({ id: Number(req.params.id) });
 		if (post && post.likes > 0) {
 			post.likes -= 1;
 			await post.save();
@@ -81,7 +81,7 @@ router.delete("/:id/like", async (req, res) => {
 // Comments Route
 router.post("/:id/comments", async (req, res) => {
 	try {
-		const post = await BlogPost.findById(req.params.id);
+		const post = await BlogPost.findOne({ id: Number(req.params.id) });
 		if (post) {
 			const newComment = {
 				id: Date.now(),
@@ -102,7 +102,7 @@ router.post("/:id/comments", async (req, res) => {
 
 router.get("/:id/comments", async (req, res) => {
 	try {
-		const post = await BlogPost.findById(req.params.id);
+		const post = await BlogPost.findOne({ id: Number(req.params.id) });
 		if (post) {
 			res.json(post.comments);
 		} else {
