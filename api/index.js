@@ -15,25 +15,25 @@ app.use(express.json()); // To handle JSON requests
 
 // MongoDB Connection
 mongoose
-    .connect(process.env.MONGODB_URI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-    })
-    .then(() => console.log("MongoDB connected"))
-    .catch((err) => console.error("MongoDB connection error:", err));
+	.connect(process.env.MONGODB_URI, {
+		useNewUrlParser: true,
+		useUnifiedTopology: true,
+	})
+	.then(() => console.log("MongoDB connected"))
+	.catch((err) => console.error("MongoDB connection error:", err));
 
 // Routes
-const blogRoutes = require('./routes/blog');
-const userRoutes = require('./routes/user');
-const categoryRoutes = require('./routes/category');
-const authRoutes = require('./routes/auth');
+const blogRoutes = require("./routes/blog");
+const userRoutes = require("./routes/user");
+const categoryRoutes = require("./routes/category");
+const authRoutes = require("./routes/auth");
 
-app.use('/api/posts', blogRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/categories', categoryRoutes);
-app.use('/api', authRoutes);
+app.use("/api/posts", blogRoutes);
+app.use("/api/users", userRoutes);
+app.use("/api/categories", categoryRoutes);
+app.use("/api", authRoutes);
 
 // Start the Server
 app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
+	console.log(`Server is running on port ${port}`);
 });
