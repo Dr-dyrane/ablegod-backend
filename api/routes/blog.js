@@ -9,6 +9,7 @@ router.get("/", async (req, res) => {
 		const posts = await BlogPost.find();
 		res.json(posts);
 	} catch (error) {
+		console.error("Error fetching posts:", error);
 		res.status(500).json({ error: "Error fetching posts" });
 	}
 });
@@ -19,28 +20,41 @@ router.post("/", async (req, res) => {
 		const savedPost = await newPost.save();
 		res.status(201).json(savedPost);
 	} catch (error) {
+		console.error("Error creating post:", error);
 		res.status(500).json({ error: "Error creating post" });
 	}
 });
 
 router.put("/:id", async (req, res) => {
 	try {
+		const post = await BlogPost.findOne({ id: Number(req.params.id) });
+		if (!post) {
+			return res.status(404).json({ error: "Post not found" });
+		}
+
 		const updatedPost = await BlogPost.findByIdAndUpdate(
-			req.params.id,
-			req.body,
+			post._id,
+			{ ...req.body },
 			{ new: true }
 		);
 		res.json(updatedPost);
 	} catch (error) {
+		console.error("Error updating post:", error);
 		res.status(500).json({ error: "Error updating post" });
 	}
 });
 
 router.delete("/:id", async (req, res) => {
 	try {
-		await BlogPost.findByIdAndDelete(req.params.id);
+		const post = await BlogPost.findOne({ id: Number(req.params.id) });
+		if (!post) {
+			return res.status(404).json({ error: "Post not found" });
+		}
+
+		await BlogPost.findByIdAndDelete(post._id); // Use _id for deletion
 		res.json({ message: "Post deleted successfully" });
 	} catch (error) {
+		console.error("Error deleting post:", error);
 		res.status(500).json({ error: "Error deleting post" });
 	}
 });
