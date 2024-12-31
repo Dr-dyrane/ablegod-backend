@@ -22,6 +22,7 @@ const blogPostSchema = new mongoose.Schema({
 	author: String,
 	status: String,
 	likes: { type: Number, default: 0 },
+	tags: [String]
 });
 
 module.exports = mongoose.model("BlogPost", blogPostSchema);
