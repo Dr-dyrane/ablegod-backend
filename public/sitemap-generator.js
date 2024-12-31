@@ -14,19 +14,19 @@ const generateSitemap = async () => {
         // Define static and dynamic URLs for the sitemap
         const urls = [
             {
-                loc: 'https://christianwrites.com',
+                loc: 'https://www.chistanwrites.com/sitemap.xml',
                 lastmod: new Date().toISOString(),
                 changefreq: 'weekly',
                 priority: 1.0,
             },
             {
-                loc: 'https://christianwrites.com/blog',
+                loc: 'https://www.chistanwrites.com/blog',
                 lastmod: new Date().toISOString(),
                 changefreq: 'weekly',
                 priority: 0.8,
             },
             ...posts.map((post) => ({
-                loc: `https://christianwrites.com/blog/${post.id}`,
+                loc: `https://www.chistanwrites.com/blog/${post.id}`,
                 lastmod: new Date().toISOString(),
                 changefreq: 'daily',
                 priority: 0.6,

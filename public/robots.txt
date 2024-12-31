@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /admin
 
-Sitemap: https://christianwrites.com/sitemap.xml
+Sitemap: https://www.chistanwrites.com/sitemap.xml
