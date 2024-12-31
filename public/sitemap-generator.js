@@ -26,7 +26,7 @@ const generateSitemap = async () => {
                 priority: 0.8,
             },
             ...posts.map((post) => ({
-                loc: `https://christianwrites.com/blog/${post._id}`,
+                loc: `https://christianwrites.com/blog/${post.id}`,
                 lastmod: new Date().toISOString(),
                 changefreq: 'daily',
                 priority: 0.6,
