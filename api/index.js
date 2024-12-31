@@ -4,6 +4,9 @@ const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const cors = require("cors");
 
+// Import the sitemap generator
+const generateSitemap = require("./utils/sitemap-generator");
+
 dotenv.config();
 
 const app = express();
@@ -32,6 +35,15 @@ app.use("/api/posts", blogRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api", authRoutes);
+
+// Generate sitemap on server startup
+generateSitemap()
+	.then(() => console.log("Sitemap generated successfully"))
+	.catch((error) => console.error("Error generating sitemap:", error));
+
+// Serve static files (including sitemap.xml)
+const path = require("path");
+app.use(express.static(path.join(__dirname, "../public")));
 
 // Start the Server
 app.listen(port, () => {
