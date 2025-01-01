@@ -3,9 +3,7 @@
 	"version": "1.0.0",
 	"main": "api/index.js",
 	"scripts": {
-		"start": "node api/index.js",
-		"sitemap": "node ./public/sitemap-generator.js",
-		"postbuild": "npm run sitemap"
+		"start": "node api/index.js"
 	},
 	"keywords": [],
 	"author": "",
