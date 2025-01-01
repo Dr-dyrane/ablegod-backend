@@ -128,15 +128,25 @@ router.get("/:id/comments", async (req, res) => {
 	}
 });
 
-router.get('/tags/:tag', async (req, res) => {
+router.get("/tags/:tag", async (req, res) => {
 	const { tag } = req.params;
 	try {
-	  const posts = await BlogPost.find({ tags: { $in: [tag] } });
-	  res.json(posts);
+		const posts = await BlogPost.find({ tags: { $in: [tag] } });
+		res.json(posts);
 	} catch (error) {
-	  console.error("Error fetching posts by tag:", error);
-	  res.status(500).json({ error: "Error fetching posts by tag" });
+		console.error("Error fetching posts by tag:", error);
+		res.status(500).json({ error: "Error fetching posts by tag" });
 	}
-  });
+});
+
+router.get("/tags", async (req, res) => {
+	try {
+		const tags = await BlogPost.distinct("tags");
+		res.json(tags);
+	} catch (error) {
+		console.error("Error fetching distinct tags:", error);
+		res.status(500).json({ error: "Error fetching distinct tags" });
+	}
+});
 
 module.exports = router;
