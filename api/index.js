@@ -127,8 +127,8 @@ app.get("/api/analytics", async (req, res) => {
 
         res.json(response.data);
     } catch (error) {
-        console.error("Error fetching GA4 metrics:", error.message);
-        res.status(500).json({ error: "Failed to fetch GA4 metrics" });
+        console.error("Error fetching GA4 metrics:", error); // Log full error
+        res.status(500).json({ error: error.message || "Failed to fetch GA4 metrics" });
     }
 });
 
