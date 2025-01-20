@@ -16,10 +16,18 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3001;
 
+// Define our allowed origins
+const allowedOrigins = [
+	"http://localhost:8080",
+	"https://www.chistanwrites.blog",
+];
+
 // Middleware
-app.use(cors());
-app.use(cors({ origin: "http://localhost:8080" }));
-app.use(cors({ origin: "https://www.chistanwrites.blog" }));
+app.use(
+	cors({
+		origin: allowedOrigins,
+	})
+);
 app.use(express.json()); // To handle JSON requests
 
 // MongoDB Connection
@@ -35,7 +43,7 @@ mongoose
 const server = http.createServer(app);
 const io = new Server(server, {
 	cors: {
-		origin: "*",
+		origin: allowedOrigins,
 		methods: ["GET", "POST"],
 	},
 });
@@ -81,7 +89,6 @@ app.post("/api/notify", (req, res) => {
 	} else {
 		io.emit("receiveNotification", { message });
 	}
-
 	res.status(200).json({ success: true, message: "Notification sent" });
 });
 
@@ -91,45 +98,45 @@ const propertyId = process.env.GA4_PROPERTY_ID;
 
 // Authenticate Service Account
 const authenticate = async () => {
-    const auth = new google.auth.GoogleAuth({
-        credentials: {
-            type: process.env.SA_TYPE,
-            project_id: process.env.SA_PROJECT_ID,
-            private_key_id: process.env.SA_PRIVATE_KEY_ID,
-            private_key: process.env.SA_PRIVATE_KEY.replace(/\\n/g, "\n"),
-            client_email: process.env.SA_CLIENT_EMAIL,
-            client_id: process.env.SA_CLIENT_ID,
-            auth_uri: process.env.SA_AUTH_URI,
-            token_uri: process.env.SA_TOKEN_URI,
-            auth_provider_x509_cert_url: process.env.SA_AUTH_PROVIDER_CERT_URL,
-            client_x509_cert_url: process.env.SA_CLIENT_CERT_URL,
-        },
-        scopes: SCOPES,
-    });
-    return auth.getClient();
+	const auth = new google.auth.GoogleAuth({
+		credentials: {
+			type: process.env.SA_TYPE,
+			project_id: process.env.SA_PROJECT_ID,
+			private_key_id: process.env.SA_PRIVATE_KEY_ID,
+			private_key: process.env.SA_PRIVATE_KEY.replace(/\\n/g, "\n"),
+			client_email: process.env.SA_CLIENT_EMAIL,
+			client_id: process.env.SA_CLIENT_ID,
+			auth_uri: process.env.SA_AUTH_URI,
+			token_uri: process.env.SA_TOKEN_URI,
+			auth_provider_x509_cert_url: process.env.SA_AUTH_PROVIDER_CERT_URL,
+			client_x509_cert_url: process.env.SA_CLIENT_CERT_URL,
+		},
+		scopes: SCOPES,
+	});
+	return auth.getClient();
 };
 
 // Fetch GA4 Metrics Route
 app.get("/api/analytics", async (req, res) => {
-    try {
-        const analyticsData = google.analyticsdata("v1beta");
-        const authClient = await authenticate();
+	try {
+		const analyticsData = google.analyticsdata("v1beta");
+		const authClient = await authenticate();
 
-        const response = await analyticsData.properties.runReport({
-            auth: authClient,
-            property: `properties/${propertyId}`,
-            requestBody: {
-                dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
-                metrics: [{ name: "activeUsers" }],
-                dimensions: [{ name: "date" }],
-            },
-        });
+		const response = await analyticsData.properties.runReport({
+			auth: authClient,
+			property: `properties/${propertyId}`,
+			requestBody: {
+				dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
+				metrics: [{ name: "activeUsers" }],
+				dimensions: [{ name: "date" }],
+			},
+		});
 
-        res.json(response.data);
-    } catch (error) {
-        console.error("Error fetching GA4 metrics:", error); // Log full error
-        res.status(500).json({ error: error.message || "Failed to fetch GA4 metrics" });
-    }
+		res.json(response.data);
+	} catch (error) {
+		console.error("Error fetching GA4 metrics:", error.message);
+		res.status(500).json({ error: error.message || "Failed to fetch GA4 metrics" });
+	}
 });
 
 // Start the Server
