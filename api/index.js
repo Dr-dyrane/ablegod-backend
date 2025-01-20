@@ -18,6 +18,8 @@ const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
+app.use(cors({ origin: "http://localhost:8080" }));
+app.use(cors({ origin: "https://www.chistanwrites.blog" }));
 app.use(express.json()); // To handle JSON requests
 
 // MongoDB Connection
