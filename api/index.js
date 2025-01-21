@@ -1,4 +1,3 @@
-// api/index.js
 const express = require("express");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
@@ -10,6 +9,7 @@ const { Server } = require("socket.io");
 const { exec } = require("child_process");
 
 const { google } = require("googleapis");
+const path = require("path");
 
 dotenv.config();
 
@@ -96,21 +96,10 @@ app.post("/api/notify", (req, res) => {
 const SCOPES = ["https://www.googleapis.com/auth/analytics.readonly"];
 const propertyId = process.env.GA4_PROPERTY_ID;
 
-// Authenticate Service Account
+// Authenticate Service Account using the JSON Key File
 const authenticate = async () => {
 	const auth = new google.auth.GoogleAuth({
-		credentials: {
-			type: process.env.SA_TYPE,
-			project_id: process.env.SA_PROJECT_ID,
-			private_key_id: process.env.SA_PRIVATE_KEY_ID,
-			private_key: process.env.SA_PRIVATE_KEY.replace(/\\n/g, "\n"),
-			client_email: process.env.SA_CLIENT_EMAIL,
-			client_id: process.env.SA_CLIENT_ID,
-			auth_uri: process.env.SA_AUTH_URI,
-			token_uri: process.env.SA_TOKEN_URI,
-			auth_provider_x509_cert_url: process.env.SA_AUTH_PROVIDER_CERT_URL,
-			client_x509_cert_url: process.env.SA_CLIENT_CERT_URL,
-		},
+		keyFile: path.join(__dirname, "service-account-file.json"), // The JSON file is now in the same directory as index.js
 		scopes: SCOPES,
 	});
 	return auth.getClient();
@@ -135,7 +124,9 @@ app.get("/api/analytics", async (req, res) => {
 		res.json(response.data);
 	} catch (error) {
 		console.error("Error fetching GA4 metrics:", error.message);
-		res.status(500).json({ error: error.message || "Failed to fetch GA4 metrics" });
+		res
+			.status(500)
+			.json({ error: error.message || "Failed to fetch GA4 metrics" });
 	}
 });
 
