@@ -26,6 +26,7 @@ const allowedOrigins = [
 app.use(
 	cors({
 		origin: allowedOrigins,
+		methods: ["GET", "POST"],
 	})
 );
 app.use(express.json()); // To handle JSON requests
@@ -44,6 +45,7 @@ const io = new Server(server, {
 		origin: allowedOrigins,
 		methods: ["GET", "POST"],
 	},
+	transports: ["websocket", "polling"], // Ensures compatibility
 });
 
 // Routes
@@ -77,8 +79,13 @@ io.on("connection", (socket) => {
 	});
 });
 
+// Health check endpoint for Socket.io
+app.get("/socket.io/test", (req, res) => {
+	res.status(200).json({ success: true, message: "WebSocket server is running!" });
+});
+
 // Notification Route for Testing
-app.post("/api/socket.io", (req, res) => {
+app.post("/api/notifications", (req, res) => {
 	const { message, userId } = req.body;
 
 	// Send the notification to all users or a specific user
