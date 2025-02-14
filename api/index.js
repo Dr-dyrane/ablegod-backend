@@ -78,7 +78,7 @@ io.on("connection", (socket) => {
 });
 
 // Notification Route for Testing
-app.post("/api/notify", (req, res) => {
+app.post("/api/socket.io", (req, res) => {
 	const { message, userId } = req.body;
 
 	// Send the notification to all users or a specific user
