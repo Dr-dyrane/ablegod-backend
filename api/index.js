@@ -33,8 +33,7 @@ app.use(express.json()); // To handle JSON requests
 
 // MongoDB Connection
 mongoose
-	.connect(process.env.MONGODB_URI, {
-	})
+	.connect(process.env.MONGODB_URI, {})
 	.then(() => console.log("MongoDB connected"))
 	.catch((err) => console.error("MongoDB connection error:", err));
 
@@ -81,7 +80,9 @@ io.on("connection", (socket) => {
 
 // Health check endpoint for Socket.io
 app.get("/socket.io/test", (req, res) => {
-	res.status(200).json({ success: true, message: "WebSocket server is running!" });
+	res
+		.status(200)
+		.json({ success: true, message: "WebSocket server is running!" });
 });
 
 // Notification Route for Testing
@@ -98,24 +99,31 @@ app.post("/api/notifications", (req, res) => {
 });
 
 // Google Analytics Data API Setup
+const serviceAccountJson = Buffer.from(
+	process.env.GOOGLE_SERVICE_ACCOUNT_BASE64,
+	"base64"
+).toString("utf8");
+const credentials = JSON.parse(serviceAccountJson);
 const SCOPES = ["https://www.googleapis.com/auth/analytics.readonly"];
 const propertyId = process.env.GA4_PROPERTY_ID;
 
 // Authenticate Service Account
 const authenticate = async () => {
 	const auth = new google.auth.GoogleAuth({
-		credentials: {
-			type: process.env.SA_TYPE,
-			project_id: process.env.SA_PROJECT_ID,
-			private_key_id: process.env.SA_PRIVATE_KEY_ID,
-			private_key: process.env.SA_PRIVATE_KEY.replace(/\\n/g, "\n").trim(),
-			client_email: process.env.SA_CLIENT_EMAIL,
-			client_id: process.env.SA_CLIENT_ID,
-			auth_uri: process.env.SA_AUTH_URI,
-			token_uri: process.env.SA_TOKEN_URI,
-			auth_provider_x509_cert_url: process.env.SA_AUTH_PROVIDER_CERT_URL,
-			client_x509_cert_url: process.env.SA_CLIENT_CERT_URL,
-		},
+		// credentials: {
+		// 	type: process.env.SA_TYPE,
+		// 	project_id: process.env.SA_PROJECT_ID,
+		// 	private_key_id: process.env.SA_PRIVATE_KEY_ID,
+		// 	private_key: process.env.SA_PRIVATE_KEY.replace(/\\n/g, "\n").trim(),
+		// 	client_email: process.env.SA_CLIENT_EMAIL,
+		// 	client_id: process.env.SA_CLIENT_ID,
+		// 	auth_uri: process.env.SA_AUTH_URI,
+		// 	token_uri: process.env.SA_TOKEN_URI,
+		// 	auth_provider_x509_cert_url: process.env.SA_AUTH_PROVIDER_CERT_URL,
+		// 	client_x509_cert_url: process.env.SA_CLIENT_CERT_URL,
+		// },
+		// keyFile: path.join(__dirname, 'service-account-file.json'),
+		credentials,
 		scopes: SCOPES,
 	});
 	return auth.getClient();
@@ -140,7 +148,9 @@ app.get("/api/analytics", async (req, res) => {
 		res.json(response.data);
 	} catch (error) {
 		console.error("Error fetching GA4 metrics:", error.message);
-		res.status(500).json({ error: error.message || "Failed to fetch GA4 metrics" });
+		res
+			.status(500)
+			.json({ error: error.message || "Failed to fetch GA4 metrics" });
 	}
 });
 
