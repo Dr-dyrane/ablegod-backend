@@ -160,7 +160,7 @@ function getDateRange(range) {
 app.get("/api/analytics", async (req, res) => {
 	try {
 		const range = req.query.range || "7d"; // Get range from query parameter
-		const { startDate, endDate, prevStartDate, prevEndDate } = getDateRange(range); // Get both current and previous periods
+		const { startDate, endDate } = getDateRange(range);
 
 		const analyticsData = google.analyticsdata("v1beta");
 		const authClient = await authenticate();
@@ -169,10 +169,7 @@ app.get("/api/analytics", async (req, res) => {
 			auth: authClient,
 			property: `properties/${propertyId}`,
 			requestBody: {
-				dateRanges: [
-					{ startDate: startDate, endDate: endDate }, // Current period
-					{ startDate: prevStartDate, endDate: prevEndDate }, // Previous period
-				],
+				dateRanges: [{ startDate: startDate, endDate: endDate }],
 				metrics: [
 					{ name: "totalUsers" },
 					{ name: "newUsers" },
@@ -194,51 +191,31 @@ app.get("/api/analytics", async (req, res) => {
 		});
 
 		// Transform API response to match expected mock data format
-		const formattedData = response.data.rows.map((row, index) => {
-			const currentMetrics = row.metricValues.slice(0, 6).map((m) => Number(m.value) || 0);
-			const prevMetrics = response.data.rows[index + response.data.rowCount / 2]?.metricValues.slice(0, 6).map((m) => Number(m.value) || 0) || [];
-
-			// Calculate percentage changes
-			const percentageChanges = currentMetrics.map((current, i) => {
-				const prev = prevMetrics[i] || 0;
-				if (prev === 0) return null; // Avoid division by zero
-				return ((current - prev) / prev) * 100;
-			});
-
-			return {
-				date: row.dimensionValues[0]?.value || "",
-				pageTitle: row.dimensionValues[1]?.value || "",
-				referrer: {
-					source: row.dimensionValues[2]?.value || "",
-					medium: row.dimensionValues[3]?.value || "",
-				},
-				location: {
-					country: row.dimensionValues[4]?.value || "",
-				},
-				device: {
-					category: row.dimensionValues[5]?.value || "",
-				},
-				os: {
-					name: row.dimensionValues[6]?.value || "",
-				},
-				metrics: {
-					totalUsers: currentMetrics[0],
-					newUsers: currentMetrics[1],
-					sessions: currentMetrics[2],
-					bounceRate: currentMetrics[3],
-					engagementRate: currentMetrics[4],
-					pageViews: currentMetrics[5],
-				},
-				percentageChanges: {
-					totalUsers: percentageChanges[0],
-					newUsers: percentageChanges[1],
-					sessions: percentageChanges[2],
-					bounceRate: percentageChanges[3],
-					engagementRate: percentageChanges[4],
-					pageViews: percentageChanges[5],
-				},
-			};
-		});
+		const formattedData = response.data.rows.map((row) => ({
+			date: row.dimensionValues[0]?.value || "",
+			pageTitle: row.dimensionValues[1]?.value || "",
+			referrer: {
+				source: row.dimensionValues[2]?.value || "",
+				medium: row.dimensionValues[3]?.value || "",
+			},
+			location: {
+				country: row.dimensionValues[4]?.value || "",
+			},
+			device: {
+				category: row.dimensionValues[5]?.value || "",
+			},
+			os: {
+				name: row.dimensionValues[6]?.value || "",
+			},
+			metrics: {
+				totalUsers: Number(row.metricValues[0]?.value) || 0,
+				newUsers: Number(row.metricValues[1]?.value) || 0,
+				sessions: Number(row.metricValues[2]?.value) || 0,
+				bounceRate: parseFloat(row.metricValues[3]?.value) || 0,
+				engagementRate: parseFloat(row.metricValues[4]?.value) || 0,
+				pageViews: Number(row.metricValues[5]?.value) || 0,
+			},
+		}));
 
 		res.json(formattedData);
 	} catch (error) {
@@ -248,7 +225,6 @@ app.get("/api/analytics", async (req, res) => {
 			.json({ error: error.message || "Failed to fetch GA4 metrics" });
 	}
 });
-
 
 app.get("/api/currently-online", async (req, res) => {
 	try {
