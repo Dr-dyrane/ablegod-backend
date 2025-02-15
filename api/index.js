@@ -226,6 +226,23 @@ app.get("/api/analytics", async (req, res) => {
 	}
 });
 
+app.get("/api/currently-online", async (req, res) => {
+	try {
+	  const response = await analyticsDataClient.runRealtimeReport({
+		property: `properties/${propertyId}`,
+		metrics: [{ name: "activeUsers" }], // This gets the real-time online count
+	  });
+  
+	  const currentlyOnline =
+		response[0]?.rows?.[0]?.metricValues?.[0]?.value || "0";
+  
+	  res.json({ currentlyOnline: Number(currentlyOnline) });
+	} catch (error) {
+	  console.error("Error fetching currently online users:", error);
+	  res.status(500).json({ error: "Failed to fetch real-time users" });
+	}
+  });
+  
 // Start the Server
 server.listen(port, () => {
 	console.log(`Server is running on port ${port}`);
