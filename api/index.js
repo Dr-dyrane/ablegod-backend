@@ -170,12 +170,54 @@ app.get("/api/analytics", async (req, res) => {
 			property: `properties/${propertyId}`,
 			requestBody: {
 				dateRanges: [{ startDate: startDate, endDate: endDate }],
-				metrics: [{ name: "activeUsers" }],
-				dimensions: [{ name: "date" }],
+				metrics: [
+					{ name: "totalUsers" },
+					{ name: "newUsers" },
+					{ name: "sessions" },
+					{ name: "bounceRate" },
+					{ name: "engagementRate" },
+					{ name: "screenPageViews" }, // For top pages
+				],
+				dimensions: [
+					{ name: "date" },
+					{ name: "pageTitle" },
+					{ name: "sessionSource" },
+					{ name: "sessionMedium" },
+					{ name: "country" },
+					{ name: "deviceCategory" },
+					{ name: "operatingSystem" },
+				],
 			},
 		});
 
-		res.json(response.data);
+		// Transform API response to match expected mock data format
+		const formattedData = response.data.rows.map((row) => ({
+			date: row.dimensionValues[0]?.value || "",
+			pageTitle: row.dimensionValues[1]?.value || "",
+			referrer: {
+				source: row.dimensionValues[2]?.value || "",
+				medium: row.dimensionValues[3]?.value || "",
+			},
+			location: {
+				country: row.dimensionValues[4]?.value || "",
+			},
+			device: {
+				category: row.dimensionValues[5]?.value || "",
+			},
+			os: {
+				name: row.dimensionValues[6]?.value || "",
+			},
+			metrics: {
+				totalUsers: Number(row.metricValues[0]?.value) || 0,
+				newUsers: Number(row.metricValues[1]?.value) || 0,
+				sessions: Number(row.metricValues[2]?.value) || 0,
+				bounceRate: parseFloat(row.metricValues[3]?.value) || 0,
+				engagementRate: parseFloat(row.metricValues[4]?.value) || 0,
+				pageViews: Number(row.metricValues[5]?.value) || 0,
+			},
+		}));
+
+		res.json(formattedData);
 	} catch (error) {
 		console.error("Error fetching GA4 metrics:", error.message);
 		res
