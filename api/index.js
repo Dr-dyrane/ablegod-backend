@@ -232,18 +232,21 @@ app.get("/api/currently-online", async (req, res) => {
 		const authClient = await authenticate();
 
 		const response = await analyticsData.properties.runRealtimeReport({
+			// Use runRealTimeReport
 			auth: authClient,
 			property: `properties/${propertyId}`,
-			metrics: [{ name: "activeUsers" }], // This gets the real-time online count
+			requestBody: {
+				metrics: [{ name: "activeUsers" }],
+			},
 		});
 
 		const currentlyOnline =
-			response[0]?.rows?.[0]?.metricValues?.[0]?.value || "0";
+			parseInt(response.data.rows[0].metricValues[0].value, 10) || 0;
 
-		res.json({ currentlyOnline: Number(currentlyOnline) });
+		res.json({ currentlyOnline });
 	} catch (error) {
 		console.error("Error fetching currently online users:", error);
-		res.status(500).json({ error: "Failed to fetch real-time users" });
+		res.status(500).json({ error: "Failed to fetch real-time users" }); // Appropriate error response
 	}
 });
 
