@@ -116,9 +116,52 @@ const authenticate = async () => {
 	return auth.getClient();
 };
 
+// Function to calculate date ranges
+function getDateRange(range) {
+	const endDate = new Date();
+	let startDate;
+
+	switch (range) {
+		case "7d":
+			startDate = new Date();
+			startDate.setDate(endDate.getDate() - 7);
+			break;
+		case "14d":
+			startDate = new Date();
+			startDate.setDate(endDate.getDate() - 14);
+			break;
+		case "1m":
+			startDate = new Date();
+			startDate.setMonth(endDate.getMonth() - 1);
+			break;
+		case "3m":
+			startDate = new Date();
+			startDate.setMonth(endDate.getMonth() - 3);
+			break;
+		case "6m":
+			startDate = new Date();
+			startDate.setMonth(endDate.getMonth() - 6);
+			break;
+		case "all":
+			startDate = new Date(2005, 0, 1); //set to the oldest date possible in GA4
+			break;
+		default:
+			startDate = new Date(); // Default to last 7 days if no valid range
+			startDate.setDate(endDate.getDate() - 7);
+	}
+
+	const formattedStartDate = startDate.toISOString().split("T")[0];
+	const formattedEndDate = endDate.toISOString().split("T")[0];
+
+	return { startDate: formattedStartDate, endDate: formattedEndDate };
+}
+
 // Fetch GA4 Metrics Route
 app.get("/api/analytics", async (req, res) => {
 	try {
+		const range = req.query.range || "7d"; // Get range from query parameter
+		const { startDate, endDate } = getDateRange(range);
+
 		const analyticsData = google.analyticsdata("v1beta");
 		const authClient = await authenticate();
 
@@ -126,7 +169,7 @@ app.get("/api/analytics", async (req, res) => {
 			auth: authClient,
 			property: `properties/${propertyId}`,
 			requestBody: {
-				dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
+				dateRanges: [{ startDate: startDate, endDate: endDate }],
 				metrics: [{ name: "activeUsers" }],
 				dimensions: [{ name: "date" }],
 			},
