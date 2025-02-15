@@ -143,7 +143,7 @@ function getDateRange(range) {
 			startDate.setMonth(endDate.getMonth() - 6);
 			break;
 		case "all":
-			startDate = new Date(2005, 0, 1); //set to the oldest date possible in GA4
+			startDate = new Date(2020, 0, 1); //set to the oldest date possible in GA4
 			break;
 		default:
 			startDate = new Date(); // Default to last 7 days if no valid range
