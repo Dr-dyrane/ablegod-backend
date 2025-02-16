@@ -7,6 +7,7 @@ const blogPostSchema = new mongoose.Schema({
 	excerpt: String,
 	content: String,
 	category: String,
+	subcategory: String,
 	date: String,
 	readTime: String,
 	comments: [
