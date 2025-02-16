@@ -25,6 +25,17 @@ router.post("/", async (req, res) => {
 	}
 });
 
+router.get("/subcategory/:subcategory", async (req, res) => {
+	const { subcategory } = req.params;
+	try {
+		const posts = await BlogPost.find({ subcategory });
+		res.json(posts);
+	} catch (error) {
+		console.error("Error fetching posts by subcategory:", error);
+		res.status(500).json({ error: "Error fetching posts by subcategory" });
+	}
+});
+
 router.put("/:id", async (req, res) => {
 	try {
 		const post = await BlogPost.findOne({ id: Number(req.params.id) });
