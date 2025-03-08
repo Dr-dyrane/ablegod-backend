@@ -3,7 +3,7 @@
 const mongoose = require("mongoose");
 
 const subscriberSchema = new mongoose.Schema({
-	id: Number,
+	id: { type: Number, unique: true },
 	name: String,
 	email: { type: String, unique: true, required: true },
 	status: { type: String, enum: ["active", "inactive"], default: "active" },
