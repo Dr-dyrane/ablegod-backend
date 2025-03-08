@@ -37,10 +37,14 @@ const sendEmail = async (to, subject, html) => {
  * @param {string} email - Subscriber email
  * @param {string} name - Subscriber name
  */
-const sendWelcomeEmail = async (email, name, id) => {
-	const unsubscribeLink = `https://ablegod-backend.vercel.app/api/subscribers/${id}/?status=inactive`;
-	const emailHtml = welcomeEmailTemplate({ name, unsubscribeLink });
-	await sendEmail(email, "Welcome to Our Newsletter!", emailHtml);
+const sendWelcomeEmail = async (email, name, id, req) => {
+	try {
+		const unsubscribeLink = `${req.protocol}://${req.get("host")}/api/subscribers/${id}?status=inactive`;
+		const emailHtml = welcomeEmailTemplate({ name, unsubscribeLink });
+		await sendEmail(email, "Welcome to Our Newsletter!", emailHtml);
+	} catch (error) {
+		console.error("Error in sendWelcomeEmail:", error.message, error.stack);
+	}
 };
 
 module.exports = { sendEmail, sendWelcomeEmail };

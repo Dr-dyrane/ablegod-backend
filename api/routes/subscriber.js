@@ -3,7 +3,7 @@
 const express = require("express");
 const router = express.Router();
 const Subscriber = require("../models/subscriber");
-const { sendWelcomeEmail } = require("../../utils/mailer");
+const { sendWelcomeEmail, sendEmail } = require("../../utils/mailer");
 
 // Get all subscribers
 router.get("/", async (req, res) => {
@@ -24,7 +24,7 @@ router.post("/", async (req, res) => {
 		const savedSubscriber = await newSubscriber.save();
 
 		/// Send welcome email with a styled template
-		await sendWelcomeEmail(email, name, id);
+		await sendWelcomeEmail(email, name, id, req);
 
 		// Send admin notification
 		await sendEmail(
