@@ -3,6 +3,7 @@
 const express = require("express");
 const router = express.Router();
 const Subscriber = require("../models/subscriber");
+const { sendWelcomeEmail } = require("../../utils/mailer");
 
 // Get all subscribers
 router.get("/", async (req, res) => {
@@ -18,8 +19,20 @@ router.get("/", async (req, res) => {
 // Add a new subscriber
 router.post("/", async (req, res) => {
 	try {
+		const { id, email, name } = req.body;
 		const newSubscriber = new Subscriber(req.body);
 		const savedSubscriber = await newSubscriber.save();
+
+		/// Send welcome email with a styled template
+		await sendWelcomeEmail(email, name, id);
+
+		// Send admin notification
+		await sendEmail(
+			"mcechefu@chistanwrites.com",
+			"New Subscriber Alert",
+			`<h1>New Subscriber</h1><p>${name} (${email}) just subscribed.</p>`
+		);
+
 		res.status(201).json(savedSubscriber);
 	} catch (error) {
 		console.error("Error adding subscriber:", error);
