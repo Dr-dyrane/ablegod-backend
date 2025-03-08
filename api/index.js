@@ -51,11 +51,13 @@ const blogRoutes = require("./routes/blog");
 const userRoutes = require("./routes/user");
 const categoryRoutes = require("./routes/category");
 const authRoutes = require("./routes/auth");
+const subscriberRoutes = require("./routes/subscriber");
 
 app.use("/api/posts", blogRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api", authRoutes);
+app.use("/api/subscribers", subscriberRoutes);
 
 // Serve static files (including sitemap.xml)
 const path = require("path");
