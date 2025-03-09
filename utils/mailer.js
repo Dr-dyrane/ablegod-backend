@@ -1,5 +1,6 @@
 const nodemailer = require("nodemailer");
-const WelcomeEmail = require("./emails/WelcomeEmail"); // Ensure this does NOT return a Promise
+const WelcomeEmail = require("./emails/WelcomeEmail");
+const NewsletterEmail = require("./emails/NewsletterEmail"); // ✅ Import NewsletterEmail
 require("dotenv").config();
 
 const transporter = nodemailer.createTransport({
@@ -41,7 +42,6 @@ const sendWelcomeEmail = async (email, name, id, req) => {
 	try {
 		const unsubscribeLink = `${req.protocol}://${req.get("host")}/api/subscribers/${id}?status=inactive`;
 
-		// ✅ Ensure WelcomeEmail does NOT return a Promise
 		const emailHtml = await WelcomeEmail({ name, unsubscribeLink });
 
 		await sendEmail(email, "Welcome to Our Newsletter!", emailHtml);
@@ -50,4 +50,49 @@ const sendWelcomeEmail = async (email, name, id, req) => {
 	}
 };
 
-module.exports = { sendEmail, sendWelcomeEmail };
+/**
+ * Send newsletter email to a subscriber
+ * @param {string} email - Subscriber email
+ * @param {string} title - Blog post title
+ * @param {string} excerpt - Short summary of the blog post
+ * @param {string} postUrl - URL to the full blog post
+ * @param {string} imageUrl - URL of the blog post image
+ * @param {object} req - Express request object
+ */
+const sendNewsletterEmail = async (
+	email,
+	title,
+	excerpt,
+	postUrl,
+	imageUrl,
+	req
+) => {
+	try {
+		// ✅ Generate the logo URL dynamically
+		const logoUrl = `${req.protocol}://${req.get("host")}/logo.png`;
+
+		// ✅ Generate the unsubscribe link
+		const unsubscribeLink = `${req.protocol}://${req.get("host")}/unsubscribe?email=${email}`;
+
+		// ✅ Render the newsletter email
+		const emailHtml = await NewsletterEmail({
+			title,
+			excerpt,
+			postUrl,
+			imageUrl,
+			logoUrl,
+			unsubscribeLink,
+		});
+
+		// ✅ Send the email
+		await sendEmail(email, `📢 New Blog Post: ${title}`, emailHtml);
+	} catch (error) {
+		console.error(
+			"❌ Error in sendNewsletterEmail:",
+			error.message,
+			error.stack
+		);
+	}
+};
+
+module.exports = { sendEmail, sendWelcomeEmail, sendNewsletterEmail };

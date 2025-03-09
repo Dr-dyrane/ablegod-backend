@@ -2,6 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const BlogPost = require("../models/blog");
+const Subscriber = require("../models/subscriber");
 
 // Routes
 router.get("/", async (req, res) => {
@@ -18,6 +19,26 @@ router.post("/", async (req, res) => {
 	try {
 		const newPost = new BlogPost(req.body);
 		const savedPost = await newPost.save();
+
+		// ✅ Destructure necessary fields
+		const { title, excerpt, imageUrl } = req.body;
+		const postUrl = `https://www.chistanwrites.blog/blog/${savedPost.id}`;
+
+		// ✅ Get all subscriber emails from your database (Assuming a Subscriber model)
+		const subscribers = await Subscriber.find({ status: "active" });
+
+		// ✅ Send the newsletter email to each subscriber
+		subscribers.forEach((subscriber) => {
+			sendNewsletterEmail(
+				subscriber.email,
+				title,
+				excerpt,
+				postUrl,
+				imageUrl,
+				req
+			);
+		});
+
 		res.status(201).json(savedPost);
 	} catch (error) {
 		console.error("Error creating post:", error);
