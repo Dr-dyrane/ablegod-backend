@@ -3,6 +3,7 @@ const express = require("express");
 const router = express.Router();
 const BlogPost = require("../models/blog");
 const Subscriber = require("../models/subscriber");
+const { sendNewsletterEmail } = require("../../utils/mailer");
 
 // Routes
 router.get("/", async (req, res) => {
