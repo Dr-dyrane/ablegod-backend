@@ -19,12 +19,12 @@ router.get("/", async (req, res) => {
 // Add a new subscriber
 router.post("/", async (req, res) => {
 	try {
-		const { id, email, name } = req.body;
+		const { email, name } = req.body;
 		const newSubscriber = new Subscriber(req.body);
 		const savedSubscriber = await newSubscriber.save();
 
 		/// Send welcome email with a styled template
-		await sendWelcomeEmail(email, name, id, req);
+		await sendWelcomeEmail(email, name, req);
 
 		// Send admin notification
 		await sendEmail(
