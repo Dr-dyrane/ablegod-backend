@@ -1,47 +1,49 @@
 const nodemailer = require("nodemailer");
 const welcomeEmailTemplate = require("./emails/WelcomeEmail");
 
+let testAccount;
+(async () => {
+	testAccount = await nodemailer.createTestAccount();
+})();
+
+// Send email function
 const sendEmail = async (to, subject, html) => {
 	try {
-		// Generate test SMTP service account from ethereal.email
-		// Only needed once per session
-		let testAccount = await nodemailer.createTestAccount(); // Async operation
-
 		// Create a transporter for Ethereal
 		let transporter = nodemailer.createTransport({
 			host: "smtp.ethereal.email",
 			port: 587,
-			secure: false, // true for 465, false for other ports
+			secure: false,
 			auth: {
-				user: testAccount.user, // generated ethereal user
-				pass: testAccount.pass, // generated ethereal password
+				user: testAccount.user,
+				pass: testAccount.pass,
 			},
 		});
 
-		// send mail with defined transport object
+		// Send mail
 		let info = await transporter.sendMail({
-			from: '"ableGod" <foo@example.com>', // You can use a fake sender address
+			from: '"AbleGod" <no-reply@ablegod.com>',
 			to,
 			subject,
 			html,
 		});
 
-		console.log("Message sent: %s", info.messageId);
-		// Preview only available when sending through an Ethereal account
-		console.log("Preview URL: %s", nodemailer.getTestMessageUrl(info));
+		console.log("✅ Message sent: %s", info.messageId);
+		console.log("🔗 Preview URL: %s", nodemailer.getTestMessageUrl(info));
 	} catch (error) {
-		console.error("Error sending email:", error); // Log the error
+		console.error("❌ Error sending email:", error.message);
 	}
 };
 
-const sendWelcomeEmail = async (email, name, req) => {
-	// Removed the id parameter
+// Send Welcome Email function
+const sendWelcomeEmail = async (email, name, id, req) => {
 	try {
-		const unsubscribeLink = `${req.protocol}://${req.get("host")}/api/subscribers/${req.params.id}?status=inactive`;
+		const unsubscribeLink = `${req.protocol}://${req.get("host")}/api/subscribers/${id}?status=inactive`;
 		const emailHtml = welcomeEmailTemplate({ name, unsubscribeLink });
+
 		await sendEmail(email, "Welcome to Our Newsletter!", emailHtml);
 	} catch (error) {
-		console.error("Error in sendWelcomeEmail:", error.message, error.stack);
+		console.error("❌ Error in sendWelcomeEmail:", error.message);
 	}
 };
 
