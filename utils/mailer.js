@@ -69,7 +69,7 @@ const sendNewsletterEmail = async (
 ) => {
 	try {
 		// ✅ Generate the logo URL dynamically
-		const logoUrl = `${req.protocol}://${req.get("host")}/logo.png`;
+		const logoUrl = 'https://res.cloudinary.com/dwvnnoxyd/image/upload/v1736610058/icon-192x192_ggvuae.png';
 
 		// ✅ Generate the unsubscribe link
 		const unsubscribeLink = `${req.protocol}://${req.get("host")}/unsubscribe?email=${email}`;
