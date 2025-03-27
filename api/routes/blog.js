@@ -22,7 +22,7 @@ router.post("/", async (req, res) => {
 		const savedPost = await newPost.save();
 
 		// ✅ Destructure necessary fields
-		const { title, excerpt, imageUrl } = req.body;
+		const { title, excerpt, image } = req.body;
 		const postUrl = `https://www.chistanwrites.blog/blog/${savedPost.id}`;
 
 		// ✅ Get all subscriber emails from your database (Assuming a Subscriber model)
@@ -35,7 +35,7 @@ router.post("/", async (req, res) => {
 				title,
 				excerpt,
 				postUrl,
-				imageUrl,
+				image,
 				req
 			);
 		});

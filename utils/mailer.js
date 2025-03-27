@@ -56,7 +56,7 @@ const sendWelcomeEmail = async (email, name, id, req) => {
  * @param {string} title - Blog post title
  * @param {string} excerpt - Short summary of the blog post
  * @param {string} postUrl - URL to the full blog post
- * @param {string} imageUrl - URL of the blog post image
+ * @param {string} image - URL of the blog post image
  * @param {object} req - Express request object
  */
 const sendNewsletterEmail = async (
@@ -64,15 +64,20 @@ const sendNewsletterEmail = async (
 	title,
 	excerpt,
 	postUrl,
-	imageUrl,
+	image,
 	req
 ) => {
 	try {
 		// ✅ Generate the logo URL dynamically
-		const logoUrl = 'https://res.cloudinary.com/dwvnnoxyd/image/upload/v1736610058/icon-192x192_ggvuae.png';
+		const logoUrl =
+			"https://res.cloudinary.com/dwvnnoxyd/image/upload/v1736610058/icon-192x192_ggvuae.png";
 
 		// ✅ Generate the unsubscribe link
 		const unsubscribeLink = `${req.protocol}://${req.get("host")}/unsubscribe?email=${email}`;
+
+		const imageUrl =
+			image ||
+			"https://res.cloudinary.com/dwvnnoxyd/image/upload/v1736610058/icon-192x192_ggvuae.png";
 
 		// ✅ Render the newsletter email
 		const emailHtml = await NewsletterEmail({
