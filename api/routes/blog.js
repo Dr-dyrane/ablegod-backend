@@ -147,6 +147,22 @@ router.post("/:id/comments", async (req, res) => {
 	}
 });
 
+router.get("/:id/downloads", async (req, res) => {
+	try {
+		const post = await BlogPost.findOne({ id: Number(req.params.id) });
+		if (post) {
+			res.json({
+				downloads: post.downloads || 0,
+			});
+		} else {
+			res.status(404).json({ error: "Post not found" });
+		}
+	} catch (error) {
+		console.error("Error fetching download count:", error);
+		res.status(500).json({ error: "Error fetching download count" });
+	}
+});
+
 router.get("/:id/comments", async (req, res) => {
 	try {
 		const post = await BlogPost.findOne({ id: Number(req.params.id) });
