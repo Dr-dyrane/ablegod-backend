@@ -163,6 +163,25 @@ router.get("/:id/downloads", async (req, res) => {
 	}
 });
 
+router.post("/:id/download", async (req, res) => {
+	try {
+		const post = await BlogPost.findOne({ id: Number(req.params.id) });
+		if (post) {
+			post.downloads += 1;
+			await post.save();
+			res.status(200).json({
+				message: "Download tracked successfully",
+				downloads: post.downloads,
+			});
+		} else {
+			res.status(404).json({ error: "Post not found" });
+		}
+	} catch (error) {
+		console.error("Error tracking blog post download:", error);
+		res.status(500).json({ error: "Error tracking blog post download" });
+	}
+});
+
 router.get("/:id/comments", async (req, res) => {
 	try {
 		const post = await BlogPost.findOne({ id: Number(req.params.id) });
