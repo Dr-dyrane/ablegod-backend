@@ -21,24 +21,26 @@ router.post("/", async (req, res) => {
 		const newPost = new BlogPost(req.body);
 		const savedPost = await newPost.save();
 
-		// ✅ Destructure necessary fields
-		const { title, excerpt, image } = req.body;
-		const postUrl = `https://www.chistanwrites.blog/blog/${savedPost.id}`;
+		// ✅ Only send newsletter if status is explicitly 'published'
+		if (req.body.status === 'published') {
+			const { title, excerpt, image } = req.body;
+			const postUrl = `https://www.chistanwrites.blog/blog/${savedPost.id}`;
 
-		// ✅ Get all subscriber emails from your database (Assuming a Subscriber model)
-		const subscribers = await Subscriber.find({ status: "active" });
+			// ✅ Get all subscriber emails from your database
+			const subscribers = await Subscriber.find({ status: "active" });
 
-		// ✅ Send the newsletter email to each subscriber
-		subscribers.forEach((subscriber) => {
-			sendNewsletterEmail(
-				subscriber.email,
-				title,
-				excerpt,
-				postUrl,
-				image,
-				req
-			);
-		});
+			// ✅ Send the newsletter email to each subscriber
+			subscribers.forEach((subscriber) => {
+				sendNewsletterEmail(
+					subscriber.email,
+					title,
+					excerpt,
+					postUrl,
+					image,
+					req
+				);
+			});
+		}
 
 		res.status(201).json(savedPost);
 	} catch (error) {
@@ -65,11 +67,32 @@ router.put("/:id", async (req, res) => {
 			return res.status(404).json({ error: "Post not found" });
 		}
 
+		const previousStatus = post.status;
 		const updatedPost = await BlogPost.findByIdAndUpdate(
 			post._id,
 			{ ...req.body },
 			{ new: true }
 		);
+
+		// ✅ Check if post is being published for the first time or re-published from a non-published state
+		if (previousStatus !== 'published' && req.body.status === 'published') {
+			const { title, excerpt, image } = updatedPost;
+			const postUrl = `https://www.chistanwrites.blog/blog/${updatedPost.id}`;
+
+			const subscribers = await Subscriber.find({ status: "active" });
+
+			subscribers.forEach((subscriber) => {
+				sendNewsletterEmail(
+					subscriber.email,
+					title,
+					excerpt,
+					postUrl,
+					image,
+					req
+				);
+			});
+		}
+
 		res.json(updatedPost);
 	} catch (error) {
 		console.error("Error updating post:", error);
