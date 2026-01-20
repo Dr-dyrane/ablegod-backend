@@ -732,4 +732,4 @@ const BounceRateWidget = ({ analyticsData }) => {
 
 ## 📝 License
 
-ISC License
+ISC License 1.0.0
