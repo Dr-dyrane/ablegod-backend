@@ -11,10 +11,11 @@ router.get("/:id/profile", async (req, res) => {
 			? { $or: [{ id: req.params.id }, { id: Number(req.params.id) }] }
 			: { id: req.params.id };
 
+
 		console.log("DEBUG: Querying profile for:", req.params.id);
 		console.log("DEBUG: Constructed Query:", JSON.stringify(query));
 
-		const user = await User.findOne(query);
+		let user = await User.findOne(query);
 
 
 		console.log("DEBUG: User found result:", user ? user.username : "NULL");
