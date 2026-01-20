@@ -60,6 +60,32 @@ app.use("/api/categories", categoryRoutes);
 app.use("/api", authRoutes);
 app.use("/api/subscribers", subscriberRoutes);
 
+// File Upload Route (Requires multer)
+const multer = require('multer');
+const { v4: uuidv4 } = require('uuid');
+const storage = multer.diskStorage({
+	destination: (req, file, cb) => {
+		// Ensure 'public/uploads' exists or consider using /tmp for serverless
+		cb(null, 'public/uploads/');
+	},
+	filename: (req, file, cb) => {
+		const ext = path.extname(file.originalname);
+		cb(null, `${uuidv4()}${ext}`);
+	}
+});
+const upload = multer({ storage });
+
+app.post('/api/upload', upload.single('image'), (req, res) => {
+	if (!req.file) {
+		return res.status(400).json({ error: 'No file uploaded' });
+	}
+	// Return the URL that points to the static file served by express
+	const protocol = req.protocol;
+	const host = req.get('host');
+	const url = `${protocol}://${host}/uploads/${req.file.filename}`;
+	res.json({ url });
+});
+
 // Serve static files (including sitemap.xml)
 const path = require("path");
 app.use(express.static(path.join(__dirname, "../public")));
