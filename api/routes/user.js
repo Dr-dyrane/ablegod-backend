@@ -11,11 +11,17 @@ router.get("/:id/profile", async (req, res) => {
 			? { $or: [{ id: req.params.id }, { id: Number(req.params.id) }] }
 			: { id: req.params.id };
 
+		console.log("DEBUG: Querying profile for:", req.params.id);
+		console.log("DEBUG: Constructed Query:", JSON.stringify(query));
+
 		const user = await User.findOne(query);
+
+		console.log("DEBUG: User found result:", user ? user.username : "NULL");
+
 		if (!user) {
 			// Optional: Create on fly if using external Auth? 
 			// For now, return 404
-			return res.status(404).json({ error: "User not found" });
+			return res.status(404).json({ error: "User not found", debugQuery: query });
 		}
 
 		// Mock activity data if not fully implemented in DB yet
@@ -28,7 +34,7 @@ router.get("/:id/profile", async (req, res) => {
 		res.json({ profile: user, ...activity });
 	} catch (error) {
 		console.error("Error fetching user profile:", error);
-		res.status(500).json({ error: "Error fetching user profile" });
+		res.status(500).json({ error: "Error fetching user profile", details: error.message });
 	}
 });
 
@@ -61,7 +67,15 @@ router.put("/:id/profile", async (req, res) => {
 router.get("/", async (req, res) => {
 	try {
 		const users = await User.find();
-		res.json(users);
+		// Add debug info to response
+		const usersWithDebug = users.map(u => {
+			const obj = u.toObject();
+			return {
+				...obj,
+				debug_idType: typeof u.id
+			};
+		});
+		res.json(usersWithDebug);
 	} catch (error) {
 		console.error("Error fetching users:", error);
 		res.status(500).json({ error: "Error fetching users" });
