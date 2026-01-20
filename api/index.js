@@ -16,19 +16,8 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Define our allowed origins
-const allowedOrigins = [
-	"http://localhost:8080",
-	"http://192.168.1.197:8080",
-	"https://www.chistanwrites.blog",
-];
-
 // Middleware
-app.use(
-	cors({
-		origin: allowedOrigins,
-	})
-);
+app.use(cors()); // Allow all origins explicitly for unblocking
 app.use(express.json()); // To handle JSON requests
 
 // MongoDB Connection
