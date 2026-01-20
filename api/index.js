@@ -19,6 +19,7 @@ const port = process.env.PORT || 3001;
 // Define our allowed origins
 const allowedOrigins = [
 	"http://localhost:8080",
+	"http://localhost:3000",
 	"http://192.168.1.197:8080",
 	"https://www.chistanwrites.blog",
 ];
