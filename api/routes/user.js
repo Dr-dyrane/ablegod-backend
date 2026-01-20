@@ -6,8 +6,12 @@ const User = require("../models/user");
 // Get User Profile
 router.get("/:id/profile", async (req, res) => {
 	try {
-		// Find by 'id' string (Supabase UUID)
-		const user = await User.findOne({ id: req.params.id });
+		// Robustly find user by 'id' (String ID from Supabase OR Number ID from legacy)
+		const query = !isNaN(req.params.id)
+			? { $or: [{ id: req.params.id }, { id: Number(req.params.id) }] }
+			: { id: req.params.id };
+
+		const user = await User.findOne(query);
 		if (!user) {
 			// Optional: Create on fly if using external Auth? 
 			// For now, return 404
@@ -31,13 +35,17 @@ router.get("/:id/profile", async (req, res) => {
 // Update User Profile
 router.put("/:id/profile", async (req, res) => {
 	try {
-		const user = await User.findOne({ id: req.params.id });
+		const query = !isNaN(req.params.id)
+			? { $or: [{ id: req.params.id }, { id: Number(req.params.id) }] }
+			: { id: req.params.id };
+
+		const user = await User.findOne(query);
 		if (!user) {
 			return res.status(404).json({ error: "User not found" });
 		}
 
 		const updatedUser = await User.findOneAndUpdate(
-			{ id: req.params.id },
+			query,
 			{ ...req.body },
 			{ new: true }
 		);
