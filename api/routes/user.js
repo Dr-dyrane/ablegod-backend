@@ -16,7 +16,16 @@ router.get("/:id/profile", async (req, res) => {
 
 		const user = await User.findOne(query);
 
+
 		console.log("DEBUG: User found result:", user ? user.username : "NULL");
+
+		// Fallback: Manual Scan (Debug/Safety Net for Mongoose casting issues)
+		if (!user) {
+			console.log("DEBUG: Falling back to manual scan for id:", req.params.id);
+			const allUsers = await User.find();
+			user = allUsers.find(u => String(u.id) === String(req.params.id));
+			if (user) console.log("DEBUG: Found user via manual scan!");
+		}
 
 		if (!user) {
 			// Optional: Create on fly if using external Auth? 
