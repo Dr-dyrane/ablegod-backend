@@ -68,12 +68,18 @@ const mockPosts = [
   }
 ];
 
-// Debug route
+// Debug route - with environment info
 app.get('/api/debug', (req, res) => {
   res.json({
     message: 'Debug route working',
     origin: req.headers.origin,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    env: {
+      MONGODB_URI: process.env.MONGODB_URI ? 'SET' : 'NOT_SET',
+      JWT_SECRET: process.env.JWT_SECRET ? 'SET' : 'NOT_SET',
+      NODE_ENV: process.env.NODE_ENV || 'undefined'
+    },
+    mongoState: mongoose.connection.readyState // 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
   });
 });
 
