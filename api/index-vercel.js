@@ -26,12 +26,22 @@ app.options('*', cors(corsOptions));
 app.use(express.json());
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://dyrane:ableGoddbkey@ablegod.wyrvp.mongodb.net/?retryWrites=true&w=majority&appName=ableGod', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 5000,
-  bufferCommands: false,
-});
+const connectDB = async () => {
+  try {
+    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://dyrane:ableGoddbkey@ablegod.wyrvp.mongodb.net/?retryWrites=true&w=majority&appName=ableGod';
+    await mongoose.connect(mongoUri, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      bufferCommands: false,
+    });
+    console.log('MongoDB connected successfully');
+  } catch (error) {
+    console.error('MongoDB connection error:', error);
+  }
+};
+
+connectDB();
 
 // Blog Post Model
 const BlogPost = mongoose.model('BlogPost', new mongoose.Schema({
@@ -78,11 +88,15 @@ app.get('/api/health', (req, res) => {
 // Real posts endpoint with database
 app.get('/api/posts', async (req, res) => {
   try {
-    const posts = await BlogPost.find();
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ error: 'Database not connected' });
+    }
+    
+    const posts = await BlogPost.find().lean();
     res.json(posts);
   } catch (error) {
     console.error('Error fetching posts:', error);
-    res.status(500).json({ error: 'Error fetching posts' });
+    res.status(500).json({ error: 'Error fetching posts', details: error.message });
   }
 });
 
