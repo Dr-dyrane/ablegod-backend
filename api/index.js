@@ -31,7 +31,7 @@ dotenv.config({ path: path.join(projectRoot, ".env") });
 // App setup
 // -----------------------------
 const app = express();
-const port = process.env.PORT || 3001;
+const port = process.env.PORT || 3000;
 
 // -----------------------------
 // CORS (fixed + more robust)
