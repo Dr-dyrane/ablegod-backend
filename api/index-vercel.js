@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
+require('dotenv').config();
 
 const app = express();
 
@@ -23,6 +25,38 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json());
 
+// MongoDB Connection
+mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://dyrane:ableGoddbkey@ablegod.wyrvp.mongodb.net/?retryWrites=true&w=majority&appName=ableGod', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000,
+  bufferCommands: false,
+});
+
+// Blog Post Model
+const BlogPost = mongoose.model('BlogPost', new mongoose.Schema({
+  id: Number,
+  title: String,
+  excerpt: String,
+  content: String,
+  category: String,
+  subcategory: String,
+  date: String,
+  readTime: String,
+  comments: [{
+    id: Number,
+    text: String,
+    author: String,
+    date: String,
+  }],
+  image: String,
+  author: String,
+  status: String,
+  likes: { type: Number, default: 0 },
+  downloads: { type: Number, default: 0 },
+  tags: [String],
+}));
+
 // Debug route - no database dependency
 app.get('/api/debug', (req, res) => {
   res.json({
@@ -41,22 +75,15 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Mock posts endpoint for testing
-app.get('/api/posts', (req, res) => {
-  res.json([
-    {
-      _id: '1',
-      title: 'Test Post 1',
-      content: 'This is a test post',
-      createdAt: new Date().toISOString()
-    },
-    {
-      _id: '2',
-      title: 'Test Post 2',
-      content: 'Another test post',
-      createdAt: new Date().toISOString()
-    }
-  ]);
+// Real posts endpoint with database
+app.get('/api/posts', async (req, res) => {
+  try {
+    const posts = await BlogPost.find();
+    res.json(posts);
+  } catch (error) {
+    console.error('Error fetching posts:', error);
+    res.status(500).json({ error: 'Error fetching posts' });
+  }
 });
 
 // 404 handler
