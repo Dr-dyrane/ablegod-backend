@@ -105,23 +105,24 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// MongoDB Connection - Use exact same connection as local
+// MongoDB Connection - Test with minimal timeout
 const connectDB = async () => {
   try {
     const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://dyrane:ableGoddbkey@ablegod.wyrvp.mongodb.net/?retryWrites=true&w=majority&appName=ableGod';
-    console.log('Attempting MongoDB connection with:', mongoUri.substring(0, 50) + '...');
+    console.log('Testing MongoDB reachability...');
     
     await mongoose.connect(mongoUri, {
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 2000, // Very aggressive
+      socketTimeoutMS: 2000,
       bufferCommands: false,
       bufferMaxEntries: 0,
+      maxPoolSize: 1,
     });
     
-    console.log('MongoDB connected successfully');
+    console.log('🎉 MongoDB connected successfully!');
   } catch (error) {
-    console.log('MongoDB connection failed:', error.message);
-    console.log('Falling back to mock data');
+    console.log('❌ MongoDB connection failed:', error.message);
+    console.log('🔄 Using mock data for stability');
   }
 };
 
