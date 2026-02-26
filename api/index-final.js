@@ -298,6 +298,89 @@ app.get("/socket.io/test", (req, res) => {
 });
 
 // -----------------------------
+// Google Analytics (simplified)
+// -----------------------------
+const { google } = require('googleapis');
+
+app.get('/api/analytics', async (req, res) => {
+  try {
+    // Mock analytics data for now
+    const mockAnalytics = [
+      {
+        date: '2024-01-20',
+        pageTitle: 'Getting Started with Web Development',
+        metrics: {
+          totalUsers: 150,
+          newUsers: 45,
+          sessions: 200,
+          pageViews: 450
+        }
+      }
+    ];
+    res.json(mockAnalytics);
+  } catch (error) {
+    console.error('Error fetching analytics:', error);
+    res.status(500).json({ error: 'Error fetching analytics' });
+  }
+});
+
+app.get('/api/currently-online', async (req, res) => {
+  try {
+    // Mock real-time data
+    res.json({ currentlyOnline: Math.floor(Math.random() * 20) + 5 });
+  } catch (error) {
+    console.error('Error fetching online users:', error);
+    res.status(500).json({ error: 'Error fetching online users' });
+  }
+});
+
+// -----------------------------
+// Subscriber routes
+// -----------------------------
+app.post('/api/subscribers', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+    
+    // Mock subscriber creation
+    console.log('New subscriber:', email);
+    res.status(201).json({ message: 'Successfully subscribed!', email });
+  } catch (error) {
+    console.error('Error subscribing:', error);
+    res.status(500).json({ error: 'Error subscribing' });
+  }
+});
+
+app.get('/api/subscribers', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const token = authHeader.slice(7);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
+    
+    if (decoded.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    // Mock subscribers
+    const subscribers = [
+      { id: 1, email: 'user1@example.com', status: 'active', createdAt: '2024-01-15' },
+      { id: 2, email: 'user2@example.com', status: 'active', createdAt: '2024-01-16' }
+    ];
+    res.json(subscribers);
+  } catch (error) {
+    console.error('Error fetching subscribers:', error);
+    res.status(500).json({ error: 'Error fetching subscribers' });
+  }
+});
+
+// -----------------------------
 // Additional Routes
 // -----------------------------
 // Categories endpoint
