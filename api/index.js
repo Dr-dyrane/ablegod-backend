@@ -77,9 +77,19 @@ app.use(express.json());
 // Debug route - no database dependency
 app.get("/api/debug", (req, res) => {
 	res.json({
-		message: "Debug route working",
+		message: "Debug route working - MongoDB Check",
 		origin: req.headers.origin,
-		timestamp: new Date().toISOString()
+		timestamp: new Date().toISOString(),
+		mongodb: {
+			readyState: mongoose.connection.readyState,
+			host: mongoose.connection.host || 'Not connected',
+			name: mongoose.connection.name || 'Not connected'
+		},
+		env: {
+			hasMongodbUri: !!process.env.MONGODB_URI,
+			mongodbUriLength: process.env.MONGODB_URI ? process.env.MONGODB_URI.length : 0,
+			nodeEnv: process.env.NODE_ENV || 'development'
+		}
 	});
 });
 
@@ -167,10 +177,14 @@ app.use("/api/stream", createStreamRoutes(io));
 const multer = require("multer");
 const { v4: uuidv4 } = require("uuid");
 
-const uploadsDir = path.join(projectRoot, "public", "uploads");
-if (!fs.existsSync(uploadsDir)) {
-	// This helps locally; on serverless this may not persist.
-	fs.mkdirSync(uploadsDir, { recursive: true });
+const uploadsDir = process.env.VERCEL ? "/tmp" : path.join(projectRoot, "public", "uploads");
+
+if (!process.env.VERCEL && !fs.existsSync(uploadsDir)) {
+	try {
+		fs.mkdirSync(uploadsDir, { recursive: true });
+	} catch (e) {
+		console.warn("[multer] Could not create uploads dir.");
+	}
 }
 
 const storage = multer.diskStorage({
