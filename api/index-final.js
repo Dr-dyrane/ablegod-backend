@@ -99,12 +99,15 @@ const connectDB = async () => {
     await mongoose.connect(mongoUri, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 2000, // Reduced timeout for faster fallback
       bufferCommands: false,
+      maxPoolSize: 1, // Reduce connections for serverless
+      connectTimeoutMS: 2000, // Connection timeout
     });
     console.log('MongoDB connected successfully');
   } catch (error) {
-    console.error('MongoDB connection error:', error);
+    console.error('MongoDB connection error:', error.message);
+    // Don't throw error - let fallback handle it gracefully
   }
 };
 
