@@ -1,9 +1,12 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
+const projectRoot = path.resolve(__dirname, "..");
 
 // CORS configuration
 const corsOptions = {
@@ -178,6 +181,49 @@ app.get('/api/posts/:id', async (req, res) => {
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
+// -----------------------------
+// File Uploads (multer)
+// -----------------------------
+const multer = require('multer');
+const { v4: uuidv4 } = require('uuid');
+
+// Use memory storage for serverless environments
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
+
+app.post(
+  '/api/upload',
+  async (req, res, next) => {
+    // Simple auth check for upload
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    
+    try {
+      const token = authHeader.slice(7);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
+      if (!decoded || (decoded.role !== 'admin' && decoded.role !== 'author')) {
+        return res.status(403).json({ error: 'Admin/Author access required' });
+      }
+      next();
+    } catch (error) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+  },
+  upload.single('image'),
+  (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    // For Vercel, return a mock URL or use a CDN service
+    const url = `https://via.placeholder.com/300x200?text=Upload-${req.file.originalname}`;
+    res.json({ url });
+  }
+);
+
+// Serve static files
+app.use(express.static(path.join(projectRoot, "public")));
+
 // Simple user schema for auth
 const User = mongoose.model('User', new mongoose.Schema({
   username: String,
@@ -240,6 +286,115 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
+// -----------------------------
+// Socket.io (simplified for Vercel)
+// -----------------------------
+const http = require('http');
+const { Server } = require('socket.io');
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: [
+      'http://localhost:8080',
+      'http://localhost:3000',
+      'http://192.168.1.197:8080',
+      'https://www.chistanwrites.blog',
+      'https://chistanwrites.blog',
+      /\.vercel\.app$/
+    ],
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
+  transports: ["websocket", "polling"],
+});
+
+// Socket auth middleware
+io.use(async (socket, next) => {
+  try {
+    const authHeader = socket.handshake.headers?.authorization || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+    if (!token) {
+      socket.data.authContext = null;
+      return next();
+    }
+
+    socket.data.authContext = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
+    return next();
+  } catch (error) {
+    console.warn("[socket] auth handshake failed:", error?.message || error);
+    socket.data.authContext = null;
+    return next();
+  }
+});
+
+io.on("connection", (socket) => {
+  console.log(`User connected: ${socket.id}`);
+
+  const getSocketUser = () => socket.data?.authContext || null;
+
+  socket.on("sendNotification", (data) => {
+    console.log(`Notification received: ${data?.message}`);
+    io.emit("receiveNotification", data);
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`User disconnected: ${socket.id}`);
+  });
+});
+
+// Health check for Socket.io
+app.get("/socket.io/test", (req, res) => {
+  res.status(200).json({ success: true, message: "WebSocket server is running!" });
+});
+
+// -----------------------------
+// Additional Routes
+// -----------------------------
+// Categories endpoint
+app.get('/api/categories', async (req, res) => {
+  try {
+    // Mock categories for now
+    const categories = [
+      { id: 1, name: 'Technology', slug: 'technology' },
+      { id: 2, name: 'Web Development', slug: 'web-development' },
+      { id: 3, name: 'Security', slug: 'security' }
+    ];
+    res.json(categories);
+  } catch (error) {
+    console.error('Error fetching categories:', error);
+    res.status(500).json({ error: 'Error fetching categories' });
+  }
+});
+
+// Users endpoint (basic)
+app.get('/api/users', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const token = authHeader.slice(7);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
+    
+    if (decoded.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    // Mock users
+    const users = [
+      { id: 'mock-admin', email: 'admin@chistanwrites.blog', role: 'admin' },
+      { id: 'mock-author', email: 'author@chistanwrites.blog', role: 'author' }
+    ];
+    res.json(users);
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Error fetching users' });
+  }
+});
+
 // 404 handler
 app.use('*', (req, res) => {
   res.status(404).json({
@@ -257,5 +412,12 @@ app.use((err, req, res, next) => {
     message: err.message
   });
 });
+
+// Start server (only if run directly)
+if (require.main === module) {
+  server.listen(process.env.PORT || 3001, () => {
+    console.log(`Server is running on port ${process.env.PORT || 3001}`);
+  });
+}
 
 module.exports = app;
