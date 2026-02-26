@@ -92,23 +92,11 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// MongoDB Connection
+// MongoDB Connection - Skip for now to use mock data
 const connectDB = async () => {
-  try {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://dyrane:ableGoddbkey@ablegod.wyrvp.mongodb.net/?retryWrites=true&w=majority&appName=ableGod';
-    await mongoose.connect(mongoUri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 2000, // Reduced timeout for faster fallback
-      bufferCommands: false,
-      maxPoolSize: 1, // Reduce connections for serverless
-      connectTimeoutMS: 2000, // Connection timeout
-    });
-    console.log('MongoDB connected successfully');
-  } catch (error) {
-    console.error('MongoDB connection error:', error.message);
-    // Don't throw error - let fallback handle it gracefully
-  }
+  console.log('MongoDB connection skipped - using mock data for Vercel stability');
+  // TODO: Configure MongoDB Atlas IP whitelist for Vercel ranges
+  // TODO: Test with direct TCP connection string
 };
 
 connectDB();
