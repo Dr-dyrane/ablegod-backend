@@ -2,26 +2,39 @@
 const express = require("express");
 const router = express.Router();
 const User = require("../models/user");
+const bcrypt = require("bcryptjs");
+const { v4: uuidv4 } = require("uuid");
+const { requireAdmin, requireSelfOrAdmin } = require("../middleware/auth");
+
+const isBcryptHash = (value = "") => /^\$2[aby]\$\d{2}\$/.test(String(value));
+
+const buildUserIdQuery = (rawId) => {
+	const asString = String(rawId);
+	const asNumber = Number.isNaN(Number(rawId)) ? null : Number(rawId);
+
+	return asNumber === null
+		? { id: asString }
+		: { $or: [{ id: asString }, { id: asNumber }] };
+};
+
+const findUserFlexible = async (rawId) => {
+	const query = buildUserIdQuery(rawId);
+	let user = await User.findOne(query);
+
+	if (!user) {
+		const allUsers = await User.find();
+		user = allUsers.find((u) => String(u.id) === String(rawId));
+	}
+
+	return { user, query };
+};
 
 // Get User Profile
-router.get("/:id/profile", async (req, res) => {
+router.get("/:id/profile", ...requireSelfOrAdmin("id"), async (req, res) => {
 	try {
-		// Robustly find user by 'id' (String ID from Supabase OR Number ID from legacy)
-		const query = !isNaN(req.params.id)
-			? { $or: [{ id: req.params.id }, { id: Number(req.params.id) }] }
-			: { id: req.params.id };
-
-		let user = await User.findOne(query);
-
-		// Fallback: Manual Scan (Safety Net for Mongoose casting issues)
-		if (!user) {
-			const allUsers = await User.find();
-			user = allUsers.find(u => String(u.id) === String(req.params.id));
-		}
+		const { user } = await findUserFlexible(req.params.id);
 
 		if (!user) {
-			// Optional: Create on fly if using external Auth? 
-			// For now, return 404
 			return res.status(404).json({ error: "User not found" });
 		}
 
@@ -40,20 +53,21 @@ router.get("/:id/profile", async (req, res) => {
 });
 
 // Update User Profile
-router.put("/:id/profile", async (req, res) => {
+router.put("/:id/profile", ...requireSelfOrAdmin("id"), async (req, res) => {
 	try {
-		const query = !isNaN(req.params.id)
-			? { $or: [{ id: req.params.id }, { id: Number(req.params.id) }] }
-			: { id: req.params.id };
-
-		const user = await User.findOne(query);
+		const { user, query } = await findUserFlexible(req.params.id);
 		if (!user) {
 			return res.status(404).json({ error: "User not found" });
 		}
 
+		const updates = { ...req.body };
+		if (updates.password && !isBcryptHash(updates.password)) {
+			updates.password = await bcrypt.hash(String(updates.password), 10);
+		}
+
 		const updatedUser = await User.findOneAndUpdate(
 			query,
-			{ ...req.body },
+			updates,
 			{ new: true }
 		);
 
@@ -65,7 +79,7 @@ router.put("/:id/profile", async (req, res) => {
 });
 
 // Legacy generic routes (Updated for String ID)
-router.get("/", async (req, res) => {
+router.get("/", ...requireAdmin, async (req, res) => {
 	try {
 		const users = await User.find();
 		res.json(users);
@@ -75,25 +89,110 @@ router.get("/", async (req, res) => {
 	}
 });
 
-router.put("/:id", async (req, res) => {
-	// ... logic similar to profile update ...
+router.get("/:id", ...requireAdmin, async (req, res) => {
 	try {
-		const user = await User.findOne({ id: req.params.id });
-		// ...
+		const { user } = await findUserFlexible(req.params.id);
+		if (!user) {
+			return res.status(404).json({ error: "User not found" });
+		}
+		res.json(user);
+	} catch (error) {
+		console.error("Error fetching user:", error);
+		res.status(500).json({ error: "Error fetching user" });
+	}
+});
+
+router.post("/", ...requireAdmin, async (req, res) => {
+	try {
+		const {
+			id,
+			username,
+			name,
+			first_name,
+			last_name,
+			email,
+			password,
+			role = "user",
+			status = "active",
+			createdAt,
+			activities = [],
+			...rest
+		} = req.body || {};
+
+		if (!username && !email) {
+			return res.status(400).json({ error: "username or email is required" });
+		}
+
+		if (!email) {
+			return res.status(400).json({ error: "email is required" });
+		}
+
+		const existing = await User.findOne({
+			$or: [{ username }, { email }],
+		});
+		if (existing) {
+			return res.status(409).json({ error: "User already exists" });
+		}
+
+		const splitName = String(name || "").trim().split(/\s+/).filter(Boolean);
+		const derivedFirst = first_name || splitName[0] || "";
+		const derivedLast = last_name || splitName.slice(1).join(" ");
+
+		let nextPassword = password || "";
+		if (nextPassword && !isBcryptHash(nextPassword)) {
+			nextPassword = await bcrypt.hash(String(nextPassword), 10);
+		}
+
+		const user = new User({
+			id: id ?? uuidv4(),
+			username: username || String(email).split("@")[0],
+			first_name: derivedFirst || undefined,
+			last_name: derivedLast || undefined,
+			email,
+			password: nextPassword,
+			role,
+			status,
+			createdAt: createdAt || new Date().toISOString(),
+			lastLogin: "",
+			activities: Array.isArray(activities) ? activities : [],
+			...rest,
+		});
+
+		const saved = await user.save();
+		res.status(201).json(saved);
+	} catch (error) {
+		console.error("Error creating user:", error);
+		res.status(500).json({ error: "Error creating user" });
+	}
+});
+
+router.put("/:id", ...requireAdmin, async (req, res) => {
+	try {
+		const { user, query } = await findUserFlexible(req.params.id);
+		if (!user) {
+			return res.status(404).json({ error: "User not found" });
+		}
+
+		const updates = { ...req.body };
+		if (updates.password && !isBcryptHash(updates.password)) {
+			updates.password = await bcrypt.hash(String(updates.password), 10);
+		}
+
 		const updatedUser = await User.findOneAndUpdate(
-			{ id: req.params.id },
-			{ ...req.body },
+			query,
+			updates,
 			{ new: true }
 		);
 		res.json(updatedUser);
 	} catch (error) {
+		console.error("Error updating user:", error);
 		res.status(500).json({ error: "Error updating user" });
 	}
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", ...requireAdmin, async (req, res) => {
 	try {
-		const user = await User.findOne({ id: Number(req.params.id) });
+		const { user } = await findUserFlexible(req.params.id);
 		if (!user) {
 			return res.status(404).json({ error: "User not found" });
 		}

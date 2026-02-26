@@ -4,9 +4,10 @@ const express = require("express");
 const router = express.Router();
 const Subscriber = require("../models/subscriber");
 const { sendWelcomeEmail, sendEmail } = require("../../utils/mailer");
+const { requireAdminOrAuthor } = require("../middleware/auth");
 
 // Get all subscribers
-router.get("/", async (req, res) => {
+router.get("/", ...requireAdminOrAuthor, async (req, res) => {
 	try {
 		const subscribers = await Subscriber.find();
 		res.json(subscribers);
@@ -41,7 +42,7 @@ router.post("/", async (req, res) => {
 });
 
 // Update subscriber status
-router.put("/:id", async (req, res) => {
+router.put("/:id", ...requireAdminOrAuthor, async (req, res) => {
 	try {
 		const subscriber = await Subscriber.findOne({ id: Number(req.params.id) });
 		if (!subscriber) {
@@ -62,7 +63,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // Delete a subscriber
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", ...requireAdminOrAuthor, async (req, res) => {
 	try {
 		const subscriber = await Subscriber.findOne({ id: Number(req.params.id) });
 		if (!subscriber) {

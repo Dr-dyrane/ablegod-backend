@@ -2,16 +2,27 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
+const fs = require("fs");
+const path = require("path");
 const cors = require("cors");
 
 // Socket.io imports
 const http = require("http");
 const { Server } = require("socket.io");
 const { exec } = require("child_process");
+const {
+	requireAdminOrAuthor,
+	resolveAuthContextFromToken,
+} = require("./middleware/auth");
 
 const { google } = require("googleapis");
 
-dotenv.config();
+const projectRoot = path.resolve(__dirname, "..");
+const envLocalPath = path.join(projectRoot, ".env.local");
+if (fs.existsSync(envLocalPath)) {
+	dotenv.config({ path: envLocalPath });
+}
+dotenv.config({ path: path.join(projectRoot, ".env") });
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -48,18 +59,53 @@ const io = new Server(server, {
 	transports: ["websocket", "polling"], // Ensures compatibility
 });
 
+io.use(async (socket, next) => {
+	try {
+		const authHeader = socket.handshake.headers?.authorization || "";
+		const headerToken =
+			typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+				? authHeader.slice(7)
+				: null;
+		const socketToken =
+			typeof socket.handshake.auth?.token === "string"
+				? socket.handshake.auth.token
+				: null;
+		const token = socketToken || headerToken;
+
+		if (!token) {
+			socket.data.authContext = null;
+			return next();
+		}
+
+		socket.data.authContext = await resolveAuthContextFromToken(token);
+		return next();
+	} catch (error) {
+		console.warn("[socket] auth handshake failed:", error?.message || error);
+		socket.data.authContext = null;
+		return next();
+	}
+});
+
 // Routes
 const blogRoutes = require("./routes/blog");
 const userRoutes = require("./routes/user");
 const categoryRoutes = require("./routes/category");
 const authRoutes = require("./routes/auth");
 const subscriberRoutes = require("./routes/subscriber");
+const createNotificationRoutes = require("./routes/notification");
+const createChatRoutes = require("./routes/chat");
+const createStreamRoutes = require("./routes/stream");
+const ChatConversation = require("./models/chatConversation");
 
 app.use("/api/posts", blogRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/categories", categoryRoutes);
-app.use("/api", authRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api", authRoutes); // Backward compatibility alias for /api/login
 app.use("/api/subscribers", subscriberRoutes);
+app.use("/api/notifications", createNotificationRoutes(io));
+app.use("/api/chat", createChatRoutes(io));
+app.use("/api/stream", createStreamRoutes(io));
 
 // File Upload Route (Requires multer)
 const multer = require('multer');
@@ -76,7 +122,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-app.post('/api/upload', upload.single('image'), (req, res) => {
+app.post('/api/upload', ...requireAdminOrAuthor, upload.single('image'), (req, res) => {
 	if (!req.file) {
 		return res.status(400).json({ error: 'No file uploaded' });
 	}
@@ -88,18 +134,95 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
 });
 
 // Serve static files (including sitemap.xml)
-const path = require("path");
 app.use(express.static(path.join(__dirname, "../public")));
 
 // Socket.IO Notification Logic
 io.on("connection", (socket) => {
 	console.log(`User connected: ${socket.id}`);
 
+	const getSocketUser = () => socket.data?.authContext?.user || null;
+	const isPrivilegedSocketUser = () =>
+		["admin", "author"].includes(
+			String(getSocketUser()?.role || "").toLowerCase()
+		);
+	const resolveSocketArgValue = (payload, key) =>
+		typeof payload === "string"
+			? payload
+			: payload && typeof payload === "object"
+			? payload[key]
+			: null;
+	const ackError = (ack, message) => {
+		if (typeof ack === "function") ack({ success: false, message });
+	};
+	const ackSuccess = (ack, room) => {
+		if (typeof ack === "function") ack({ success: true, room });
+	};
+
 	// Event listener for sending notifications
 	socket.on("sendNotification", (data) => {
 		console.log(`Notification received: ${data.message}`);
 		// Broadcast the notification to all connected clients
 		io.emit("receiveNotification", data);
+	});
+
+	socket.on("joinUserRoom", (payload, ack) => {
+		const userId = resolveSocketArgValue(payload, "userId");
+		if (!userId) return ackError(ack, "userId is required");
+
+		const authUser = getSocketUser();
+		const isAllowed =
+			authUser &&
+			(String(authUser.id) === String(userId) || isPrivilegedSocketUser());
+
+		if (!isAllowed) {
+			return ackError(ack, "Insufficient permissions");
+		}
+
+		socket.join(`user:${userId}`);
+		return ackSuccess(ack, `user:${userId}`);
+	});
+
+	socket.on("leaveUserRoom", (payload, ack) => {
+		const userId = resolveSocketArgValue(payload, "userId");
+		if (!userId) return ackError(ack, "userId is required");
+		socket.leave(`user:${userId}`);
+		return ackSuccess(ack, `user:${userId}`);
+	});
+
+	socket.on("joinConversationRoom", async (payload, ack) => {
+		try {
+			const conversationId = resolveSocketArgValue(payload, "conversationId");
+			if (!conversationId) return ackError(ack, "conversationId is required");
+
+			const authUser = getSocketUser();
+			if (!authUser) return ackError(ack, "Authentication required");
+
+			const conversation = await ChatConversation.findOne({
+				id: String(conversationId),
+			});
+			if (!conversation) return ackError(ack, "Conversation not found");
+
+			const isMember = (conversation.member_ids || []).some(
+				(memberId) => String(memberId) === String(authUser.id)
+			);
+
+			if (!isMember && !isPrivilegedSocketUser()) {
+				return ackError(ack, "Insufficient permissions");
+			}
+
+			socket.join(`conversation:${conversationId}`);
+			return ackSuccess(ack, `conversation:${conversationId}`);
+		} catch (error) {
+			console.error("[socket] joinConversationRoom failed:", error);
+			return ackError(ack, "Failed to join conversation room");
+		}
+	});
+
+	socket.on("leaveConversationRoom", (payload, ack) => {
+		const conversationId = resolveSocketArgValue(payload, "conversationId");
+		if (!conversationId) return ackError(ack, "conversationId is required");
+		socket.leave(`conversation:${conversationId}`);
+		return ackSuccess(ack, `conversation:${conversationId}`);
 	});
 
 	socket.on("disconnect", () => {
@@ -114,32 +237,47 @@ app.get("/socket.io/test", (req, res) => {
 		.json({ success: true, message: "WebSocket server is running!" });
 });
 
-// Notification Route for Testing
-app.post("/api/notifications", (req, res) => {
-	const { message, userId } = req.body;
+// Notification routes are mounted above via ./routes/notification (REST + realtime fanout).
 
-	// Send the notification to all users or a specific user
-	if (userId) {
-		io.to(userId).emit("receiveNotification", { message });
-	} else {
-		io.emit("receiveNotification", { message });
-	}
-	res.status(200).json({ success: true, message: "Notification sent" });
-});
-
-// Google Analytics Data API Setup
-const serviceAccountJson = Buffer.from(
-	process.env.GOOGLE_SERVICE_ACCOUNT_BASE64,
-	"base64"
-).toString("utf8");
-const credentials = JSON.parse(serviceAccountJson);
+// Google Analytics Data API Setup (lazy/guarded so missing envs don't crash the server)
 const SCOPES = ["https://www.googleapis.com/auth/analytics.readonly"];
 const propertyId = process.env.GA4_PROPERTY_ID;
+let gaCredentials = null;
 
 // Authenticate Service Account
 const authenticate = async () => {
+	if (!propertyId) {
+		const error = new Error("GA4 analytics is not configured (missing GA4_PROPERTY_ID)");
+		error.statusCode = 503;
+		throw error;
+	}
+
+	if (!gaCredentials) {
+		const encodedServiceAccount = process.env.GOOGLE_SERVICE_ACCOUNT_BASE64;
+		if (!encodedServiceAccount) {
+			const error = new Error(
+				"GA4 analytics is not configured (missing GOOGLE_SERVICE_ACCOUNT_BASE64)"
+			);
+			error.statusCode = 503;
+			throw error;
+		}
+
+		try {
+			const serviceAccountJson = Buffer.from(
+				encodedServiceAccount,
+				"base64"
+			).toString("utf8");
+			gaCredentials = JSON.parse(serviceAccountJson);
+		} catch (parseError) {
+			console.error("Invalid GOOGLE_SERVICE_ACCOUNT_BASE64 payload:", parseError);
+			const error = new Error("GA4 analytics credentials are invalid");
+			error.statusCode = 500;
+			throw error;
+		}
+	}
+
 	const auth = new google.auth.GoogleAuth({
-		credentials,
+		credentials: gaCredentials,
 		scopes: SCOPES,
 	});
 	return auth.getClient();
@@ -186,7 +324,7 @@ function getDateRange(range) {
 }
 
 // Fetch GA4 Metrics Route
-app.get("/api/analytics", async (req, res) => {
+app.get("/api/analytics", ...requireAdminOrAuthor, async (req, res) => {
 	try {
 		const range = req.query.range || "7d"; // Get range from query parameter
 		const { startDate, endDate } = getDateRange(range);
@@ -250,12 +388,12 @@ app.get("/api/analytics", async (req, res) => {
 	} catch (error) {
 		console.error("Error fetching GA4 metrics:", error.message);
 		res
-			.status(500)
+			.status(error.statusCode || 500)
 			.json({ error: error.message || "Failed to fetch GA4 metrics" });
 	}
 });
 
-app.get("/api/currently-online", async (req, res) => {
+app.get("/api/currently-online", ...requireAdminOrAuthor, async (req, res) => {
 	try {
 		const analyticsData = google.analyticsdata("v1beta");
 		const authClient = await authenticate();
@@ -275,11 +413,22 @@ app.get("/api/currently-online", async (req, res) => {
 		res.json({ currentlyOnline });
 	} catch (error) {
 		console.error("Error fetching currently online users:", error);
-		res.status(500).json({ error: "Failed to fetch real-time users" }); // Appropriate error response
+		res
+			.status(error.statusCode || 500)
+			.json({ error: error.message || "Failed to fetch real-time users" }); // Appropriate error response
 	}
 });
 
-// Start the Server
-server.listen(port, () => {
-	console.log(`Server is running on port ${port}`);
-});
+// Start the Server only when executed directly (not when imported for tests)
+if (require.main === module) {
+	server.listen(port, () => {
+		console.log(`Server is running on port ${port}`);
+	});
+}
+
+module.exports = {
+	app,
+	server,
+	io,
+	mongoose,
+};

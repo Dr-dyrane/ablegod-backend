@@ -15,6 +15,9 @@ const userSchema = new mongoose.Schema({
 	twitter: String,
 	linkedin: String,
 	password: String,
+	password_reset_token_hash: String,
+	password_reset_token_expires_at: String,
+	password_reset_requested_at: String,
 	createdAt: String,
 	lastLogin: String,
 	recent_activity: { // Renamed/Structured for Portal compatibility if needed, or keeping simple
@@ -26,7 +29,7 @@ const userSchema = new mongoose.Schema({
 	activities: [
 		{
 			id: Number,
-			type: String,
+			type: { type: String },
 			timestamp: String,
 			details: String,
 		},

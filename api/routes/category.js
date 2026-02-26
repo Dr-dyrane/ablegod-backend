@@ -2,6 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const Category = require("../models/category");
+const { requireAdminOrAuthor } = require("../middleware/auth");
 
 router.get("/", async (req, res) => {
 	try {
@@ -13,7 +14,7 @@ router.get("/", async (req, res) => {
 	}
 });
 
-router.post("/", async (req, res) => {
+router.post("/", ...requireAdminOrAuthor, async (req, res) => {
 	try {
 		const newCategory = new Category(req.body);
 		const savedCategory = await newCategory.save();
@@ -24,7 +25,7 @@ router.post("/", async (req, res) => {
 	}
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", ...requireAdminOrAuthor, async (req, res) => {
 	try {
 		const category = await Category.findOne({ id: req.params.id });
 		if (!category) {
@@ -43,7 +44,7 @@ router.put("/:id", async (req, res) => {
 	}
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", ...requireAdminOrAuthor, async (req, res) => {
 	try {
 		const category = await Category.findOne({ id: req.params.id });
 		if (!category) {

@@ -3,7 +3,8 @@
 	"version": "1.0.0",
 	"main": "api/index.js",
 	"scripts": {
-		"start": "node api/index.js"
+		"start": "node api/index.js",
+		"test:e2e:endpoints": "node --test tests/e2e/endpoints.e2e.test.js"
 	},
 	"keywords": [],
 	"author": "",
@@ -13,15 +14,21 @@
 		"@react-email/components": "^0.0.33",
 		"@react-email/render": "^1.0.5",
 		"axios": "^1.6.7",
+		"bcryptjs": "^2.4.3",
 		"cors": "^2.8.5",
 		"dotenv": "^16.4.7",
 		"express": "^4.21.2",
 		"googleapis": "^144.0.0",
+		"jsonwebtoken": "^9.0.2",
 		"mongoose": "^8.0.0",
 		"multer": "^1.4.5-lts.1",
 		"nodemailer": "^6.10.0",
 		"socket.io": "^4.8.1",
 		"uuid": "^9.0.1",
 		"xml": "^1.0.1"
+	},
+	"devDependencies": {
+		"mongodb-memory-server": "^10.1.4",
+		"supertest": "^7.1.1"
 	}
 }

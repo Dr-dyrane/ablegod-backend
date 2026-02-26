@@ -4,6 +4,22 @@ const router = express.Router();
 const BlogPost = require("../models/blog");
 const Subscriber = require("../models/subscriber");
 const { sendNewsletterEmail } = require("../../utils/mailer");
+const { requireAdminOrAuthor } = require("../middleware/auth");
+
+const isStreamPostPayload = (payload = {}) => {
+	try {
+		const subcategory = String(payload.subcategory || "").trim().toLowerCase();
+		if (subcategory === "stream") return true;
+
+		const category = String(payload.category || "").trim().toLowerCase();
+		if (category.includes("stream")) return true;
+
+		const tags = Array.isArray(payload.tags) ? payload.tags : [];
+		return tags.some((tag) => String(tag || "").trim().toLowerCase() === "stream");
+	} catch {
+		return false;
+	}
+};
 
 // Routes
 router.get("/", async (req, res) => {
@@ -16,13 +32,13 @@ router.get("/", async (req, res) => {
 	}
 });
 
-router.post("/", async (req, res) => {
+router.post("/", ...requireAdminOrAuthor, async (req, res) => {
 	try {
 		const newPost = new BlogPost(req.body);
 		const savedPost = await newPost.save();
 
 		// ✅ Only send newsletter if status is explicitly 'published'
-		if (req.body.status === 'published') {
+		if (req.body.status === 'published' && !isStreamPostPayload(req.body)) {
 			const { title, excerpt, image } = req.body;
 			const postUrl = `https://www.chistanwrites.blog/blog/${savedPost.id}`;
 
@@ -60,7 +76,7 @@ router.get("/subcategory/:subcategory", async (req, res) => {
 	}
 });
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", ...requireAdminOrAuthor, async (req, res) => {
 	try {
 		const post = await BlogPost.findOne({ id: Number(req.params.id) });
 		if (!post) {
@@ -75,7 +91,17 @@ router.put("/:id", async (req, res) => {
 		);
 
 		// ✅ Check if post is being published for the first time or re-published from a non-published state
-		if (previousStatus !== 'published' && req.body.status === 'published') {
+		const newsletterPayload = {
+			...(updatedPost && typeof updatedPost.toObject === "function"
+				? updatedPost.toObject()
+				: updatedPost || {}),
+			...req.body,
+		};
+		if (
+			previousStatus !== 'published' &&
+			req.body.status === 'published' &&
+			!isStreamPostPayload(newsletterPayload)
+		) {
 			const { title, excerpt, image } = updatedPost;
 			const postUrl = `https://www.chistanwrites.blog/blog/${updatedPost.id}`;
 
@@ -100,7 +126,7 @@ router.put("/:id", async (req, res) => {
 	}
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", ...requireAdminOrAuthor, async (req, res) => {
 	try {
 		const post = await BlogPost.findOne({ id: Number(req.params.id) });
 		if (!post) {
@@ -237,6 +263,19 @@ router.get("/tags", async (req, res) => {
 	} catch (error) {
 		console.error("Error fetching distinct tags:", error);
 		res.status(500).json({ error: "Error fetching distinct tags" });
+	}
+});
+
+router.get("/:id", async (req, res) => {
+	try {
+		const post = await BlogPost.findOne({ id: Number(req.params.id) });
+		if (!post) {
+			return res.status(404).json({ error: "Post not found" });
+		}
+		res.json(post);
+	} catch (error) {
+		console.error("Error fetching post:", error);
+		res.status(500).json({ error: "Error fetching post" });
 	}
 });
 
