@@ -287,66 +287,14 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // -----------------------------
-// Socket.io (simplified for Vercel)
+// Socket.io (simplified for Vercel - disabled for now)
 // -----------------------------
-const http = require('http');
-const { Server } = require('socket.io');
+// Note: Socket.io requires server instance which doesn't work well with serverless Vercel
+// We'll add this back when we have proper serverless WebSocket setup
 
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: [
-      'http://localhost:8080',
-      'http://localhost:3000',
-      'http://192.168.1.197:8080',
-      'https://www.chistanwrites.blog',
-      'https://chistanwrites.blog',
-      /\.vercel\.app$/
-    ],
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
-  transports: ["websocket", "polling"],
-});
-
-// Socket auth middleware
-io.use(async (socket, next) => {
-  try {
-    const authHeader = socket.handshake.headers?.authorization || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-
-    if (!token) {
-      socket.data.authContext = null;
-      return next();
-    }
-
-    socket.data.authContext = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
-    return next();
-  } catch (error) {
-    console.warn("[socket] auth handshake failed:", error?.message || error);
-    socket.data.authContext = null;
-    return next();
-  }
-});
-
-io.on("connection", (socket) => {
-  console.log(`User connected: ${socket.id}`);
-
-  const getSocketUser = () => socket.data?.authContext || null;
-
-  socket.on("sendNotification", (data) => {
-    console.log(`Notification received: ${data?.message}`);
-    io.emit("receiveNotification", data);
-  });
-
-  socket.on("disconnect", () => {
-    console.log(`User disconnected: ${socket.id}`);
-  });
-});
-
-// Health check for Socket.io
+// Health check for Socket.io (mock)
 app.get("/socket.io/test", (req, res) => {
-  res.status(200).json({ success: true, message: "WebSocket server is running!" });
+  res.status(200).json({ success: true, message: "WebSocket endpoint configured (disabled for Vercel)" });
 });
 
 // -----------------------------
@@ -415,8 +363,9 @@ app.use((err, req, res, next) => {
 
 // Start server (only if run directly)
 if (require.main === module) {
-  server.listen(process.env.PORT || 3001, () => {
-    console.log(`Server is running on port ${process.env.PORT || 3001}`);
+  const port = process.env.PORT || 3001;
+  app.listen(port, () => {
+    console.log(`Server is running on port ${port}`);
   });
 }
 
