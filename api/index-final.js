@@ -97,7 +97,6 @@ app.get('/api/health', (req, res) => {
 });
 
 // Neon PostgreSQL Connection
-const { neon } = require('@neondatabase/serverless');
 let sql;
 
 const connectDB = async () => {
@@ -109,6 +108,8 @@ const connectDB = async () => {
       return;
     }
     
+    // Dynamic import to handle potential module issues
+    const { neon } = await import('@neondatabase/serverless');
     sql = neon(databaseUrl);
     console.log('🎉 Neon PostgreSQL connected successfully!');
     
