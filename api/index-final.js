@@ -78,12 +78,15 @@ app.get('/api/debug', (req, res) => {
     3: 'DISCONNECTING'
   };
   
+  const mongoUri = process.env.MONGODB_URI || '';
+  
   res.json({
     message: 'Debug route working',
     origin: req.headers.origin,
     timestamp: new Date().toISOString(),
     env: {
-      MONGODB_URI: process.env.MONGODB_URI ? 'SET' : 'NOT_SET',
+      MONGODB_URI: mongoUri ? mongoUri.substring(0, 50) + '...' : 'NOT_SET',
+      MONGODB_URI_LENGTH: mongoUri.length,
       JWT_SECRET: process.env.JWT_SECRET ? 'SET' : 'NOT_SET',
       NODE_ENV: process.env.NODE_ENV || 'undefined'
     },
