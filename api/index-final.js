@@ -70,6 +70,14 @@ const mockPosts = [
 
 // Debug route - with environment info
 app.get('/api/debug', (req, res) => {
+  const mongoState = mongoose.connection.readyState;
+  const stateNames = {
+    0: 'DISCONNECTED',
+    1: 'CONNECTED', 
+    2: 'CONNECTING',
+    3: 'DISCONNECTING'
+  };
+  
   res.json({
     message: 'Debug route working',
     origin: req.headers.origin,
@@ -79,7 +87,9 @@ app.get('/api/debug', (req, res) => {
       JWT_SECRET: process.env.JWT_SECRET ? 'SET' : 'NOT_SET',
       NODE_ENV: process.env.NODE_ENV || 'undefined'
     },
-    mongoState: mongoose.connection.readyState // 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
+    mongoState: mongoState,
+    mongoStateName: stateNames[mongoState] || 'UNKNOWN',
+    usingMockData: mongoState !== 1
   });
 });
 
