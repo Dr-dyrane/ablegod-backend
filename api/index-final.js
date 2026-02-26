@@ -92,11 +92,23 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// MongoDB Connection - Skip for now to use mock data
+// MongoDB Connection - Try with aggressive timeouts
 const connectDB = async () => {
-  console.log('MongoDB connection skipped - using mock data for Vercel stability');
-  // TODO: Configure MongoDB Atlas IP whitelist for Vercel ranges
-  // TODO: Test with direct TCP connection string
+  try {
+    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://dyrane:ableGoddbkey@ablegod.wyrvp.mongodb.net/?retryWrites=true&w=majority&appName=ableGod';
+    await mongoose.connect(mongoUri, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 1000, // Very aggressive timeout
+      bufferCommands: false,
+      maxPoolSize: 1,
+      connectTimeoutMS: 1000,
+      socketTimeoutMS: 1000,
+    });
+    console.log('MongoDB connected successfully');
+  } catch (error) {
+    console.log('MongoDB connection failed, using mock data:', error.message);
+  }
 };
 
 connectDB();
