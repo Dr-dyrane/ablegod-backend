@@ -4,6 +4,8 @@
 	"main": "api/index.js",
 	"scripts": {
 		"start": "node api/index.js",
+		"seed": "node scripts/seed-database.js",
+		"seed:stream": "node scripts/seed-stream-content.js",
 		"test:e2e:endpoints": "node --test tests/e2e/endpoints.e2e.test.js"
 	},
 	"keywords": [],
