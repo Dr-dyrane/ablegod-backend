@@ -18,6 +18,9 @@ const userSchema = new mongoose.Schema({
 	password_reset_token_hash: String,
 	password_reset_token_expires_at: String,
 	password_reset_requested_at: String,
+	followers_count: { type: Number, default: 0 },
+	following_count: { type: Number, default: 0 },
+	verified: { type: Boolean, default: false },
 	createdAt: String,
 	lastLogin: String,
 	recent_activity: { // Renamed/Structured for Portal compatibility if needed, or keeping simple

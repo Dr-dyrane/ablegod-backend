@@ -2,6 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const User = require("../models/user");
+const Follow = require("../models/follow");
 const bcrypt = require("bcryptjs");
 const { v4: uuidv4 } = require("uuid");
 const { requireAdmin, requireSelfOrAdmin, requireCapabilities } = require("../middleware/auth");
@@ -247,6 +248,262 @@ router.delete("/:id", ...requireAdmin, async (req, res) => {
 	} catch (error) {
 		console.error("Error deleting user:", error);
 		res.status(500).json({ error: "Error deleting user" });
+	}
+});
+
+// Follow System Endpoints
+
+// POST /api/users/follow - Follow a user
+router.post("/follow", requireCapabilities("user:follow"), async (req, res) => {
+	try {
+		const { following_id } = req.body;
+		const follower_id = req.user.id;
+
+		if (!following_id) {
+			return res.status(400).json({ error: "following_id is required" });
+		}
+
+		// Check if user exists
+		const targetUser = await User.findById(following_id);
+		if (!targetUser) {
+			return res.status(404).json({ error: "User not found" });
+		}
+
+		// Check if already following
+		const existingFollow = await Follow.findOne({
+			follower_id,
+			following_id
+		});
+
+		if (existingFollow) {
+			return res.status(409).json({ error: "Already following this user" });
+		}
+
+		// Create follow relationship
+		const follow = new Follow({
+			follower_id,
+			following_id
+		});
+
+		await follow.save();
+
+		// Update follower counts
+		await Promise.all([
+			User.findByIdAndUpdate(follower_id, { $inc: { following_count: 1 } }),
+			User.findByIdAndUpdate(following_id, { $inc: { followers_count: 1 } })
+		]);
+
+		// Get updated user data
+		const updatedUser = await User.findById(following_id)
+			.select('username name email avatar_url followers_count following_count');
+
+		res.json({
+			success: true,
+			message: "User followed successfully",
+			user: updatedUser
+		});
+
+	} catch (error) {
+		console.error("Error following user:", error);
+		res.status(500).json({ error: "Error following user" });
+	}
+});
+
+// DELETE /api/users/unfollow - Unfollow a user
+router.delete("/unfollow", requireCapabilities("user:follow"), async (req, res) => {
+	try {
+		const { following_id } = req.body;
+		const follower_id = req.user.id;
+
+		if (!following_id) {
+			return res.status(400).json({ error: "following_id is required" });
+		}
+
+		// Find and remove follow relationship
+		const follow = await Follow.findOneAndDelete({
+			follower_id,
+			following_id
+		});
+
+		if (!follow) {
+			return res.status(404).json({ error: "Not following this user" });
+		}
+
+		// Update follower counts
+		await Promise.all([
+			User.findByIdAndUpdate(follower_id, { $inc: { following_count: -1 } }),
+			User.findByIdAndUpdate(following_id, { $inc: { followers_count: -1 } })
+		]);
+
+		// Get updated user data
+		const updatedUser = await User.findById(following_id)
+			.select('username name email avatar_url followers_count following_count');
+
+		res.json({
+			success: true,
+			message: "User unfollowed successfully",
+			user: updatedUser
+		});
+
+	} catch (error) {
+		console.error("Error unfollowing user:", error);
+		res.status(500).json({ error: "Error unfollowing user" });
+	}
+});
+
+// GET /api/users/suggestions - Get suggested users to follow
+router.get("/suggestions", requireCapabilities("user:read"), async (req, res) => {
+	try {
+		const currentUserId = req.user.id;
+		const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+
+		// Get users that current user follows
+		const following = await Follow.find({ follower_id: currentUserId })
+			.distinct('following_id');
+
+		// Add current user to exclusion list
+		const excludedIds = [...following, currentUserId];
+
+		// Get suggested users with smart algorithm
+		const suggestions = await User.aggregate([
+			// Exclude already followed users and self
+			{ $match: { 
+				_id: { $nin: excludedIds.map(id => typeof id === 'string' ? new mongoose.Types.ObjectId(id) : id) },
+				status: 'active'
+			}},
+			
+			// Add mutual followers count
+			{
+				$lookup: {
+					from: 'follows',
+					let: { userId: '$_id' },
+					pipeline: [
+						{ $match: { 
+							following_id: '$$userId',
+							follower_id: { $in: following.map(id => typeof id === 'string' ? new mongoose.Types.ObjectId(id) : id) }
+						}},
+						{ $count: 'mutual_count' }
+					],
+					as: 'mutual_followers'
+				}
+			},
+			
+			// Add is_following field (will be false for suggestions)
+			{ $addFields: {
+				mutual_followers: { $ifNull: [{ $arrayElemAt: ['$mutual_followers.mutual_count', 0] }, 0] },
+				is_following: false
+			}},
+			
+			// Sort by mutual followers first, then by follower count
+			{ $sort: { mutual_followers: -1, followers_count: -1 } },
+			
+			// Limit results
+			{ $limit: limit },
+			
+			// Project final fields
+			{ $project: {
+				id: '$_id',
+				name: 1,
+				username: 1,
+				email: 1,
+				avatar_url: 1,
+				bio: 1,
+				followers_count: 1,
+				following_count: 1,
+				mutual_followers: 1,
+				is_following: 1,
+				verified: { $ifNull: ['$verified', false] },
+				created_at: 1
+			}}
+		]);
+
+		res.json({
+			success: true,
+			users: suggestions,
+			total: suggestions.length
+		});
+
+	} catch (error) {
+		console.error("Error getting suggested users:", error);
+		res.status(500).json({ error: "Error getting suggested users" });
+	}
+});
+
+// GET /api/users/:id/follow-status - Check if following a user
+router.get("/:id/follow-status", requireCapabilities("user:read"), async (req, res) => {
+	try {
+		const targetUserId = req.params.id;
+		const currentUserId = req.user.id;
+
+		if (targetUserId === currentUserId.toString()) {
+			return res.json({ is_following: false });
+		}
+
+		const isFollowing = await Follow.isFollowing(currentUserId, targetUserId);
+
+		res.json({ is_following: isFollowing });
+
+	} catch (error) {
+		console.error("Error checking follow status:", error);
+		res.status(500).json({ error: "Error checking follow status" });
+	}
+});
+
+// GET /api/users/:id/followers - Get user's followers
+router.get("/:id/followers", requireCapabilities("user:read"), async (req, res) => {
+	try {
+		const userId = req.params.id;
+		const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+		const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
+		const followers = await Follow.getFollowers(userId, limit, offset);
+		
+		const users = followers.map(follow => ({
+			id: follow.follower_id._id,
+			name: follow.follower_id.name,
+			username: follow.follower_id.username,
+			email: follow.follower_id.email,
+			avatar_url: follow.follower_id.avatar_url,
+			followers_count: follow.follower_id.followers_count || 0,
+			following_count: follow.follower_id.following_count || 0,
+			is_following: false, // Could be enhanced to check actual follow status
+			created_at: follow.created_at
+		}));
+
+		res.json({ users });
+
+	} catch (error) {
+		console.error("Error getting followers:", error);
+		res.status(500).json({ error: "Error getting followers" });
+	}
+});
+
+// GET /api/users/:id/following - Get user's following
+router.get("/:id/following", requireCapabilities("user:read"), async (req, res) => {
+	try {
+		const userId = req.params.id;
+		const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+		const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
+		const following = await Follow.getFollowing(userId, limit, offset);
+		
+		const users = following.map(follow => ({
+			id: follow.following_id._id,
+			name: follow.following_id.name,
+			username: follow.following_id.username,
+			email: follow.following_id.email,
+			avatar_url: follow.following_id.avatar_url,
+			followers_count: follow.following_id.followers_count || 0,
+			following_count: follow.following_id.following_count || 0,
+			is_following: true,
+			created_at: follow.created_at
+		}));
+
+		res.json({ users });
+
+	} catch (error) {
+		console.error("Error getting following:", error);
+		res.status(500).json({ error: "Error getting following" });
 	}
 });
 
