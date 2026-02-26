@@ -4,7 +4,7 @@ const router = express.Router();
 const User = require("../models/user");
 const bcrypt = require("bcryptjs");
 const { v4: uuidv4 } = require("uuid");
-const { requireAdmin, requireSelfOrAdmin } = require("../middleware/auth");
+const { requireAdmin, requireSelfOrAdmin, requireCapabilities } = require("../middleware/auth");
 
 const isBcryptHash = (value = "") => /^\$2[aby]\$\d{2}\$/.test(String(value));
 
@@ -86,6 +86,51 @@ router.get("/", ...requireAdmin, async (req, res) => {
 	} catch (error) {
 		console.error("Error fetching users:", error);
 		res.status(500).json({ error: "Error fetching users" });
+	}
+});
+
+router.get("/lookup", async (req, res, next) => {
+	// First authenticate
+	try {
+		const token = req.headers.authorization?.replace("Bearer ", "");
+		if (!token) {
+			return res.status(401).json({ error: "Authentication required" });
+		}
+		
+		const jwt = require("jsonwebtoken");
+		const User = require("../models/user");
+		const secret = process.env.JWT_SECRET || "ablegod-dev-secret-change-me";
+		const decoded = jwt.verify(token, secret);
+		
+		// Allow any authenticated user to lookup other users for chat/messaging
+		if (!decoded.user) {
+			return res.status(401).json({ error: "Invalid token" });
+		}
+	} catch (error) {
+		return res.status(401).json({ error: "Authentication failed" });
+	}
+	
+	// Continue with the lookup logic
+	try {
+		const { search } = req.query;
+		let query = {};
+		
+		if (search) {
+			const searchStr = String(search);
+			query = {
+				$or: [
+					{ username: { $regex: searchStr, $options: "i" } },
+					{ email: { $regex: searchStr, $options: "i" } },
+					{ name: { $regex: searchStr, $options: "i" } }
+				]
+			};
+		}
+		
+		const users = await User.find(query).limit(20);
+		res.json(users);
+	} catch (error) {
+		console.error("Error looking up users:", error);
+		res.status(500).json({ error: "Error looking up users" });
 	}
 });
 
