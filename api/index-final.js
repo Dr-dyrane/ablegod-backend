@@ -102,11 +102,11 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// MongoDB Connection - Clean version without Socket.io interference
+// MongoDB Connection - Use exact same connection as local
 const connectDB = async () => {
   try {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://dyrane:ableGoddbkey@ablegod.wyrvp.mongodb.net/ablegod?retryWrites=true&w=majority';
-    console.log('Attempting MongoDB connection...');
+    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://dyrane:ableGoddbkey@ablegod.wyrvp.mongodb.net/?retryWrites=true&w=majority&appName=ableGod';
+    console.log('Attempting MongoDB connection with:', mongoUri.substring(0, 50) + '...');
     
     await mongoose.connect(mongoUri, {
       serverSelectionTimeoutMS: 5000,
