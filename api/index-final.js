@@ -108,14 +108,19 @@ const connectDB = async () => {
       return;
     }
     
-    // Dynamic import to handle potential module issues
-    const { neon } = await import('@neondatabase/serverless');
-    sql = neon(databaseUrl);
-    console.log('🎉 Neon PostgreSQL connected successfully!');
-    
-    // Test the connection
-    const result = await sql`SELECT NOW()`;
-    console.log('✅ Database test query successful:', result[0]);
+    // Try regular import first
+    try {
+      const { neon } = require('@neondatabase/serverless');
+      sql = neon(databaseUrl);
+      console.log('🎉 Neon PostgreSQL connected successfully!');
+      
+      // Test the connection
+      const result = await sql`SELECT NOW()`;
+      console.log('✅ Database test query successful:', result[0]);
+    } catch (importError) {
+      console.log('❌ Import failed:', importError.message);
+      console.log('🔄 Using mock data for stability');
+    }
     
   } catch (error) {
     console.log('❌ Neon connection failed:', error.message);
