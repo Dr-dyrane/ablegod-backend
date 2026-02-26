@@ -74,6 +74,15 @@ app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 app.use(express.json());
 
+// Debug route - no database dependency
+app.get("/api/debug", (req, res) => {
+	res.json({
+		message: "Debug route working",
+		origin: req.headers.origin,
+		timestamp: new Date().toISOString()
+	});
+});
+
 // -----------------------------
 // MongoDB connection (guarded)
 // -----------------------------
