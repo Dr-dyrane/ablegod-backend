@@ -4,3 +4,4 @@ node_modules
 seed.js
 seedUser.js
 api/service-account-file.json
+.env*.local
