@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
+require('dotenv').config();
 
 const app = express();
 
@@ -81,9 +83,67 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Posts endpoint with mock data
-app.get('/api/posts', (req, res) => {
-  res.json(mockPosts);
+// MongoDB Connection
+const connectDB = async () => {
+  try {
+    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://dyrane:ableGoddbkey@ablegod.wyrvp.mongodb.net/?retryWrites=true&w=majority&appName=ableGod';
+    await mongoose.connect(mongoUri, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      bufferCommands: false,
+    });
+    console.log('MongoDB connected successfully');
+  } catch (error) {
+    console.error('MongoDB connection error:', error);
+  }
+};
+
+connectDB();
+
+// Blog Post Model
+const BlogPost = mongoose.model('BlogPost', new mongoose.Schema({
+  id: Number,
+  title: String,
+  excerpt: String,
+  content: String,
+  category: String,
+  subcategory: String,
+  date: String,
+  readTime: String,
+  comments: [{
+    id: Number,
+    text: String,
+    author: String,
+    date: String,
+  }],
+  image: String,
+  author: String,
+  status: String,
+  likes: { type: Number, default: 0 },
+  downloads: { type: Number, default: 0 },
+  tags: [String],
+}));
+
+// Posts endpoint with database fallback to mock
+app.get('/api/posts', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      // Try database first
+      const posts = await BlogPost.find().lean();
+      if (posts && posts.length > 0) {
+        return res.json(posts);
+      }
+    }
+    
+    // Fallback to mock data if DB fails or empty
+    console.log('Using mock data - DB not connected or empty');
+    res.json(mockPosts);
+  } catch (error) {
+    console.error('Error fetching posts:', error);
+    // Fallback to mock data on error
+    res.json(mockPosts);
+  }
 });
 
 // Get single post by ID
