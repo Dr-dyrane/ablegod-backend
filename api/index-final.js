@@ -147,12 +147,97 @@ app.get('/api/posts', async (req, res) => {
 });
 
 // Get single post by ID
-app.get('/api/posts/:id', (req, res) => {
-  const post = mockPosts.find(p => p.id === parseInt(req.params.id));
-  if (!post) {
-    return res.status(404).json({ error: 'Post not found' });
+app.get('/api/posts/:id', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      // Try database first
+      const post = await BlogPost.findOne({ id: parseInt(req.params.id) }).lean();
+      if (post) {
+        return res.json(post);
+      }
+    }
+    
+    // Fallback to mock data
+    const post = mockPosts.find(p => p.id === parseInt(req.params.id));
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+    res.json(post);
+  } catch (error) {
+    console.error('Error fetching post:', error);
+    // Fallback to mock data on error
+    const post = mockPosts.find(p => p.id === parseInt(req.params.id));
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+    res.json(post);
   }
-  res.json(post);
+});
+
+// Add authentication routes (basic version)
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+
+// Simple user schema for auth
+const User = mongoose.model('User', new mongoose.Schema({
+  username: String,
+  email: String,
+  password: String,
+  role: { type: String, default: 'user' }
+}));
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (mongoose.connection.readyState === 1) {
+      // Try database auth
+      const user = await User.findOne({ email }).lean();
+      if (user && await bcrypt.compare(password, user.password)) {
+        const token = jwt.sign({ id: user._id, email: user.email, role: user.role }, process.env.JWT_SECRET || 'fallback-secret');
+        return res.json({ token, user: { id: user._id, email: user.email, role: user.role } });
+      }
+    }
+    
+    // Fallback mock auth
+    if (email === 'admin@chistanwrites.blog' && password === 'admin123') {
+      const token = jwt.sign({ id: 'mock-admin', email, role: 'admin' }, process.env.JWT_SECRET || 'fallback-secret');
+      return res.json({ token, user: { id: 'mock-admin', email, role: 'admin' } });
+    }
+    
+    res.status(401).json({ error: 'Invalid credentials' });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+    
+    if (mongoose.connection.readyState === 1) {
+      // Check if user exists
+      const existingUser = await User.findOne({ email }).lean();
+      if (existingUser) {
+        return res.status(400).json({ error: 'User already exists' });
+      }
+      
+      // Create new user
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const user = new User({ username, email, password: hashedPassword });
+      await user.save();
+      
+      const token = jwt.sign({ id: user._id, email: user.email, role: user.role }, process.env.JWT_SECRET || 'fallback-secret');
+      return res.json({ token, user: { id: user._id, email: user.email, role: user.role } });
+    }
+    
+    // Fallback response
+    res.status(503).json({ error: 'Registration service unavailable' });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Registration failed' });
+  }
 });
 
 // 404 handler
