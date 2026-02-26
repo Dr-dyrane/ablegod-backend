@@ -192,9 +192,14 @@ const BlogPost = mongoose.model('BlogPost', new mongoose.Schema({
 // Posts endpoint with Neon database
 app.get('/api/posts', async (req, res) => {
   try {
+    console.log('Posts endpoint called, sql exists:', !!sql);
+    
     if (sql) {
+      console.log('Querying Neon database...');
       // Try Neon database first
       const posts = await sql`SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC`;
+      console.log('Neon query result:', posts?.length || 0, 'posts');
+      
       if (posts && posts.length > 0) {
         return res.json(posts);
       }
@@ -205,6 +210,7 @@ app.get('/api/posts', async (req, res) => {
     res.json(mockPosts);
   } catch (error) {
     console.error('Error fetching posts:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ error: 'Error fetching posts' });
   }
 });
