@@ -96,34 +96,43 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Neon PostgreSQL Connection
+// MongoDB Connection (test first, then backup to Neon)
+const mongoose = require('mongoose');
 let sql;
 
 const connectDB = async () => {
   try {
+    // First try MongoDB (for testing)
+    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://dyrane:ableGoddbkey@ablegod.wyrvp.mongodb.net/?retryWrites=true&w=majority&appName=ableGod';
+    console.log('🔄 Testing MongoDB connection...');
+    
+    await mongoose.connect(mongoUri, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 5000,
+      bufferCommands: false,
+      bufferMaxEntries: 0,
+    });
+    
+    console.log('✅ MongoDB connected successfully!');
+    
+    // If MongoDB works, also connect to Neon for backup
     const databaseUrl = process.env.DATABASE_URL;
-    if (!databaseUrl) {
-      console.log('❌ DATABASE_URL not found in environment');
-      console.log('🔄 Using mock data for stability');
-      return;
+    if (databaseUrl) {
+      try {
+        const { neon } = require('@neondatabase/serverless');
+        sql = neon(databaseUrl);
+        console.log('🎉 Neon backup connected successfully!');
+        
+        // Test the connection
+        const result = await sql`SELECT NOW()`;
+        console.log('✅ Neon backup test query successful:', result[0]);
+      } catch (neonError) {
+        console.log('❌ Neon backup failed:', neonError.message);
+      }
     }
     
-    // Try regular import first
-    try {
-      const { neon } = require('@neondatabase/serverless');
-      sql = neon(databaseUrl);
-      console.log('🎉 Neon PostgreSQL connected successfully!');
-      
-      // Test the connection
-      const result = await sql`SELECT NOW()`;
-      console.log('✅ Database test query successful:', result[0]);
-    } catch (importError) {
-      console.log('❌ Import failed:', importError.message);
-      console.log('🔄 Using mock data for stability');
-    }
-    
-  } catch (error) {
-    console.log('❌ Neon connection failed:', error.message);
+  } catch (mongoError) {
+    console.log('❌ MongoDB connection failed:', mongoError.message);
     console.log('🔄 Using mock data for stability');
   }
 };
@@ -202,31 +211,117 @@ const BlogPost = mongoose.model('BlogPost', new mongoose.Schema({
   featured: { type: Boolean, default: false }
 }));
 
-// Posts endpoint with Neon database
+// Posts endpoint - test MongoDB first, backup to Neon
 app.get('/api/posts', async (req, res) => {
   try {
-    console.log('Posts endpoint called, sql exists:', !!sql);
+    console.log('Posts endpoint called - testing MongoDB first...');
     
-    if (sql) {
-      console.log('Querying Neon database...');
-      // Try Neon database first
-      const posts = await sql`SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC`;
-      console.log('Neon query result:', posts?.length || 0, 'posts');
+    // Try MongoDB first (primary)
+    if (mongoose.connection.readyState === 1) {
+      console.log('Querying MongoDB...');
+      const BlogPost = mongoose.model('BlogPost', new mongoose.Schema({
+        id: Number,
+        title: String,
+        excerpt: String,
+        content: String,
+        category: String,
+        subcategory: String,
+        date: String,
+        readTime: String,
+        comments: [String],
+        image: String,
+        author: String,
+        status: String,
+        likes: Number,
+        downloads: Number,
+        tags: [String],
+        featured: { type: Boolean, default: false }
+      }));
       
+      const posts = await BlogPost.find().lean();
       if (posts && posts.length > 0) {
+        console.log('✅ MongoDB query successful:', posts.length, 'posts');
+        
+        // Backup to Neon
+        if (sql) {
+          console.log('🔄 Backing up to Neon...');
+          await backupToNeon(posts);
+        }
+        
+        return res.json(posts);
+      }
+    }
+    
+    // Try Neon backup
+    if (sql) {
+      console.log('Querying Neon backup...');
+      const posts = await sql`SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC`;
+      if (posts && posts.length > 0) {
+        console.log('✅ Neon backup query successful:', posts.length, 'posts');
         return res.json(posts);
       }
     }
     
     // Fallback to mock data
-    console.log('Using mock data - Neon DB not connected or empty');
+    console.log('Using mock data - no database connections available');
     res.json(mockPosts);
   } catch (error) {
     console.error('Error fetching posts:', error);
-    console.error('Error stack:', error.stack);
     res.status(500).json({ error: 'Error fetching posts' });
   }
 });
+
+// Backup function for Neon
+const backupToNeon = async (posts) => {
+  try {
+    // Create table if not exists
+    await sql`
+      CREATE TABLE IF NOT EXISTS blog_posts (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        excerpt TEXT,
+        content TEXT,
+        category TEXT,
+        subcategory TEXT,
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        read_time TEXT,
+        comments JSONB DEFAULT '[]',
+        image TEXT,
+        author TEXT,
+        status TEXT DEFAULT 'draft',
+        likes INTEGER DEFAULT 0,
+        downloads INTEGER DEFAULT 0,
+        tags JSONB DEFAULT '[]',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+    
+    // Clear and insert posts
+    await sql`DELETE FROM blog_posts`;
+    
+    for (const post of posts) {
+      await sql`
+        INSERT INTO blog_posts (
+          id, title, excerpt, content, category, subcategory, 
+          date, read_time, comments, image, author, status, 
+          likes, downloads, tags
+        ) VALUES (
+          ${post.id}, ${post.title}, ${post.excerpt}, 
+          ${post.content}, ${post.category}, ${post.subcategory},
+          ${post.date ? new Date(post.date) : new Date()}, ${post.readTime}, 
+          ${JSON.stringify(post.comments || [])}, ${post.image}, ${post.author}, 
+          ${post.status || 'published'}, ${post.likes || 0}, ${post.downloads || 0}, 
+          ${JSON.stringify(post.tags || [])}
+        )
+      `;
+    }
+    
+    console.log('✅ Successfully backed up', posts.length, 'posts to Neon');
+  } catch (error) {
+    console.log('❌ Backup to Neon failed:', error.message);
+  }
+};
 
 // Get single post by ID
 app.get('/api/posts/:id', async (req, res) => {
