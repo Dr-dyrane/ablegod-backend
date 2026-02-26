@@ -70,29 +70,20 @@ const mockPosts = [
 
 // Debug route - with environment info
 app.get('/api/debug', (req, res) => {
-  const mongoState = mongoose.connection.readyState;
-  const stateNames = {
-    0: 'DISCONNECTED',
-    1: 'CONNECTED', 
-    2: 'CONNECTING',
-    3: 'DISCONNECTING'
-  };
-  
-  const mongoUri = process.env.MONGODB_URI || '';
+  const databaseUrl = process.env.DATABASE_URL || '';
   
   res.json({
     message: 'Debug route working',
     origin: req.headers.origin,
     timestamp: new Date().toISOString(),
     env: {
-      MONGODB_URI: mongoUri ? mongoUri.substring(0, 50) + '...' : 'NOT_SET',
-      MONGODB_URI_LENGTH: mongoUri.length,
+      DATABASE_URL: databaseUrl ? databaseUrl.substring(0, 50) + '...' : 'NOT_SET',
+      DATABASE_URL_LENGTH: databaseUrl.length,
       JWT_SECRET: process.env.JWT_SECRET ? 'SET' : 'NOT_SET',
       NODE_ENV: process.env.NODE_ENV || 'undefined'
     },
-    mongoState: mongoState,
-    mongoStateName: stateNames[mongoState] || 'UNKNOWN',
-    usingMockData: mongoState !== 1
+    neonConnected: !!sql,
+    usingMockData: !sql
   });
 });
 
@@ -105,28 +96,67 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// MongoDB Connection - Test with minimal timeout
+// Neon PostgreSQL Connection
+const { neon } = require('@neondatabase/serverless');
+let sql;
+
 const connectDB = async () => {
   try {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://dyrane:ableGoddbkey@ablegod.wyrvp.mongodb.net/?retryWrites=true&w=majority&appName=ableGod';
-    console.log('Testing MongoDB reachability...');
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) {
+      console.log('❌ DATABASE_URL not found in environment');
+      console.log('🔄 Using mock data for stability');
+      return;
+    }
     
-    await mongoose.connect(mongoUri, {
-      serverSelectionTimeoutMS: 2000, // Very aggressive
-      socketTimeoutMS: 2000,
-      bufferCommands: false,
-      bufferMaxEntries: 0,
-      maxPoolSize: 1,
-    });
+    sql = neon(databaseUrl);
+    console.log('🎉 Neon PostgreSQL connected successfully!');
     
-    console.log('🎉 MongoDB connected successfully!');
+    // Test the connection
+    const result = await sql`SELECT NOW()`;
+    console.log('✅ Database test query successful:', result[0]);
+    
   } catch (error) {
-    console.log('❌ MongoDB connection failed:', error.message);
+    console.log('❌ Neon connection failed:', error.message);
     console.log('🔄 Using mock data for stability');
   }
 };
 
 connectDB();
+
+// Blog Post Schema for Neon
+const createBlogPostsTable = async () => {
+  if (!sql) return;
+  
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS blog_posts (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        excerpt TEXT,
+        content TEXT,
+        category TEXT,
+        subcategory TEXT,
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        read_time TEXT,
+        comments JSONB DEFAULT '[]',
+        image TEXT,
+        author TEXT,
+        status TEXT DEFAULT 'draft',
+        likes INTEGER DEFAULT 0,
+        downloads INTEGER DEFAULT 0,
+        tags JSONB DEFAULT '[]',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+    console.log('✅ Blog posts table ready');
+  } catch (error) {
+    console.log('❌ Table creation failed:', error.message);
+  }
+};
+
+createBlogPostsTable();
 
 // Blog Post Model
 const BlogPost = mongoose.model('BlogPost', new mongoose.Schema({
@@ -150,54 +180,50 @@ const BlogPost = mongoose.model('BlogPost', new mongoose.Schema({
   likes: { type: Number, default: 0 },
   downloads: { type: Number, default: 0 },
   tags: [String],
+  featured: { type: Boolean, default: false }
 }));
 
-// Posts endpoint with database fallback to mock
+// Posts endpoint with Neon database
 app.get('/api/posts', async (req, res) => {
   try {
-    if (mongoose.connection.readyState === 1) {
-      // Try database first
-      const posts = await BlogPost.find().lean();
+    if (sql) {
+      // Try Neon database first
+      const posts = await sql`SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC`;
       if (posts && posts.length > 0) {
         return res.json(posts);
       }
     }
     
-    // Fallback to mock data if DB fails or empty
-    console.log('Using mock data - DB not connected or empty');
+    // Fallback to mock data
+    console.log('Using mock data - Neon DB not connected or empty');
     res.json(mockPosts);
   } catch (error) {
     console.error('Error fetching posts:', error);
-    // Fallback to mock data on error
-    res.json(mockPosts);
+    res.status(500).json({ error: 'Error fetching posts' });
   }
 });
 
 // Get single post by ID
 app.get('/api/posts/:id', async (req, res) => {
   try {
-    if (mongoose.connection.readyState === 1) {
-      // Try database first
-      const post = await BlogPost.findOne({ id: parseInt(req.params.id) }).lean();
-      if (post) {
-        return res.json(post);
+    if (sql) {
+      // Try Neon database first
+      const posts = await sql`SELECT * FROM blog_posts WHERE id = ${req.params.id}`;
+      if (posts && posts.length > 0) {
+        return res.json(posts[0]);
       }
     }
     
     // Fallback to mock data
     const post = mockPosts.find(p => p.id === parseInt(req.params.id));
-    if (!post) {
-      return res.status(404).json({ error: 'Post not found' });
+    if (post) {
+      res.json(post);
+    } else {
+      res.status(404).json({ error: 'Post not found' });
     }
-    res.json(post);
   } catch (error) {
     console.error('Error fetching post:', error);
-    // Fallback to mock data on error
-    const post = mockPosts.find(p => p.id === parseInt(req.params.id));
-    if (!post) {
-      return res.status(404).json({ error: 'Post not found' });
-    }
-    res.json(post);
+    res.status(500).json({ error: 'Error fetching post' });
   }
 });
 
