@@ -73,7 +73,7 @@ app.get('/api/debug', (req, res) => {
   const databaseUrl = process.env.DATABASE_URL || '';
   
   res.json({
-    message: 'Debug route working',
+    message: 'Debug route working - v2',
     origin: req.headers.origin,
     timestamp: new Date().toISOString(),
     env: {
