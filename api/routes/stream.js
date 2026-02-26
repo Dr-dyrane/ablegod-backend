@@ -10,7 +10,7 @@ const Notification = require("../models/notification");
 const User = require("../models/user");
 const { requireCapabilities } = require("../middleware/auth");
 
-function createStreamRoutes(io) {
+function createStreamRoutes(pusher) {
 	const router = express.Router();
 
 	const requireFeedRead = requireCapabilities("stream:read", "feed:read");
@@ -22,7 +22,7 @@ function createStreamRoutes(io) {
 	const requireStreamFeature = requireCapabilities("stream:feature", "stream:moderate");
 
 	const emitNotificationEvent = (notification) => {
-		if (!io || !notification?.user_id) return;
+		if (!pusher || !notification?.user_id) return;
 		const payload = {
 			id: notification.id,
 			type: notification.type,
@@ -34,7 +34,7 @@ function createStreamRoutes(io) {
 			user_id: notification.user_id,
 			metadata: notification.metadata || {},
 		};
-		io.to(`user:${notification.user_id}`).emit("notification:new", payload);
+		pusher.trigger(`user-${notification.user_id}`, "notification:new", payload);
 	};
 
 	const REACTION_TYPES = ["like", "amen", "pray"];
@@ -59,23 +59,23 @@ function createStreamRoutes(io) {
 		const reactionCounts = sanitizeReactionCounts(post.reaction_counts);
 		const totalReactions = totalReactionsFromCounts(reactionCounts);
 		return {
-		id: String(post.id),
-		author_user_id: String(post.author_user_id || ""),
-		author_name: String(post.author_name || ""),
-		author_role: String(post.author_role || "user"),
-		intent: String(post.intent || "Reflection"),
-		title: String(post.title || ""),
-		content: String(post.content || ""),
-		excerpt: String(post.excerpt || ""),
-		image_url: String(post.image_url || ""),
-		status: String(post.status || "published"),
-		reply_count: Number(post.reply_count || 0),
-		like_count: Number(post.like_count || totalReactions),
-		reaction_counts: reactionCounts,
-		viewer_reaction: options.viewerReaction ? String(options.viewerReaction) : null,
-		metadata: post.metadata || {},
-		created_at: post.created_at,
-		updated_at: post.updated_at,
+			id: String(post.id),
+			author_user_id: String(post.author_user_id || ""),
+			author_name: String(post.author_name || ""),
+			author_role: String(post.author_role || "user"),
+			intent: String(post.intent || "Reflection"),
+			title: String(post.title || ""),
+			content: String(post.content || ""),
+			excerpt: String(post.excerpt || ""),
+			image_url: String(post.image_url || ""),
+			status: String(post.status || "published"),
+			reply_count: Number(post.reply_count || 0),
+			like_count: Number(post.like_count || totalReactions),
+			reaction_counts: reactionCounts,
+			viewer_reaction: options.viewerReaction ? String(options.viewerReaction) : null,
+			metadata: post.metadata || {},
+			created_at: post.created_at,
+			updated_at: post.updated_at,
 		};
 	};
 
@@ -83,20 +83,20 @@ function createStreamRoutes(io) {
 		const reactionCounts = sanitizeReactionCounts(reply.reaction_counts);
 		const totalReactions = totalReactionsFromCounts(reactionCounts);
 		return {
-		id: String(reply.id),
-		post_id: String(reply.post_id),
-		parent_reply_id: reply.parent_reply_id ? String(reply.parent_reply_id) : null,
-		author_user_id: String(reply.author_user_id || ""),
-		author_name: String(reply.author_name || ""),
-		author_role: String(reply.author_role || "user"),
-		content: String(reply.content || ""),
-		status: String(reply.status || "published"),
-		like_count: Number(reply.like_count || totalReactions),
-		reaction_counts: reactionCounts,
-		viewer_reaction: options.viewerReaction ? String(options.viewerReaction) : null,
-		metadata: reply.metadata || {},
-		created_at: reply.created_at,
-		updated_at: reply.updated_at,
+			id: String(reply.id),
+			post_id: String(reply.post_id),
+			parent_reply_id: reply.parent_reply_id ? String(reply.parent_reply_id) : null,
+			author_user_id: String(reply.author_user_id || ""),
+			author_name: String(reply.author_name || ""),
+			author_role: String(reply.author_role || "user"),
+			content: String(reply.content || ""),
+			status: String(reply.status || "published"),
+			like_count: Number(reply.like_count || totalReactions),
+			reaction_counts: reactionCounts,
+			viewer_reaction: options.viewerReaction ? String(options.viewerReaction) : null,
+			metadata: reply.metadata || {},
+			created_at: reply.created_at,
+			updated_at: reply.updated_at,
 		};
 	};
 
@@ -380,8 +380,8 @@ function createStreamRoutes(io) {
 			moderationStatus === "review"
 				? 6
 				: moderationStatus === "restricted" || moderationStatus === "blocked"
-				? 100
-				: 0;
+					? 100
+					: 0;
 
 		return (
 			replyWeight +
@@ -1264,9 +1264,9 @@ function createStreamRoutes(io) {
 					const metadata = post?.metadata && typeof post.metadata === "object" ? post.metadata : {};
 					const reportCount = Number(
 						reportCountsByPostId.get(String(post.id)) ??
-							metadata.report_count ??
-							metadata.reports ??
-							0
+						metadata.report_count ??
+						metadata.reports ??
+						0
 					);
 					const replyReportCount = Number(replyReportCountsByPostId.get(String(post.id)) || 0);
 					const moderationStatus = String(metadata.moderation_status || "").toLowerCase();
@@ -1358,8 +1358,8 @@ function createStreamRoutes(io) {
 	function itemScore(reportCount, moderationStatus) {
 		const moderationWeight =
 			moderationStatus === "blocked" ? 20 :
-			moderationStatus === "restricted" ? 14 :
-			moderationStatus === "review" ? 8 : 0;
+				moderationStatus === "restricted" ? 14 :
+					moderationStatus === "review" ? 8 : 0;
 		return Math.max(0, Number(reportCount || 0)) * 10 + moderationWeight;
 	}
 

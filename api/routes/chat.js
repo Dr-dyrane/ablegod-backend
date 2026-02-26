@@ -6,7 +6,7 @@ const ChatIdentityKey = require("../models/chatIdentityKey");
 const User = require("../models/user");
 const { requireCapabilities, authenticate } = require("../middleware/auth");
 
-function createChatRoutes(io) {
+function createChatRoutes(pusher) {
 	const router = express.Router();
 
 	const requireChatRead = requireCapabilities("chat:read");
@@ -69,8 +69,8 @@ function createChatRoutes(io) {
 	};
 
 	const emitChatMessage = (conversation, message) => {
-		if (!io) return;
-		io.to(`conversation:${conversation.id}`).emit("chat:message", {
+		if (!pusher) return;
+		pusher.trigger(`conversation-${conversation.id}`, "chat:message", {
 			conversation_id: conversation.id,
 			message,
 		});
@@ -192,13 +192,13 @@ function createChatRoutes(io) {
 				id: { $ne: authUserId },
 				...(queryText
 					? {
-							$or: [
-								{ username: { $regex: queryText, $options: "i" } },
-								{ email: { $regex: queryText, $options: "i" } },
-								{ first_name: { $regex: queryText, $options: "i" } },
-								{ last_name: { $regex: queryText, $options: "i" } },
-							],
-					  }
+						$or: [
+							{ username: { $regex: queryText, $options: "i" } },
+							{ email: { $regex: queryText, $options: "i" } },
+							{ first_name: { $regex: queryText, $options: "i" } },
+							{ last_name: { $regex: queryText, $options: "i" } },
+						],
+					}
 					: {}),
 			};
 
@@ -267,9 +267,9 @@ function createChatRoutes(io) {
 			const existingDirect =
 				normalizedType === "direct"
 					? await ChatConversation.findOne({
-							type: "direct",
-							member_ids: { $all: normalizedMembers, $size: 2 },
-					  })
+						type: "direct",
+						member_ids: { $all: normalizedMembers, $size: 2 },
+					})
 					: null;
 
 			if (existingDirect) {

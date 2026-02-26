@@ -3,7 +3,7 @@ const { v4: uuidv4 } = require("uuid");
 const Notification = require("../models/notification");
 const { authenticate } = require("../middleware/auth");
 
-function createNotificationRoutes(io) {
+function createNotificationRoutes(pusher) {
 	const router = express.Router();
 
 	const isPrivileged = (user) => ["admin", "author"].includes(String(user?.role || "").toLowerCase());
@@ -12,7 +12,7 @@ function createNotificationRoutes(io) {
 		String(authUser?.id) === String(targetUserId) || isPrivileged(authUser);
 
 	const emitNotificationEvent = (notification) => {
-		if (!io) return;
+		if (!pusher) return;
 		const payload = {
 			id: notification.id,
 			type: notification.type,
@@ -25,8 +25,8 @@ function createNotificationRoutes(io) {
 			metadata: notification.metadata || {},
 		};
 
-		io.to(`user:${notification.user_id}`).emit("notification:new", payload);
-		io.emit("receiveNotification", {
+		pusher.trigger(`user-${notification.user_id}`, "notification:new", payload);
+		pusher.trigger("notifications", "receiveNotification", {
 			message: notification.message,
 			userId: notification.user_id,
 			type: notification.type,

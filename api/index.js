@@ -6,7 +6,8 @@ const fs = require("fs");
 const path = require("path");
 const cors = require("cors");
 
-// Socket.io imports
+// Real-time imports
+const Pusher = require("pusher");
 const http = require("http");
 const { Server } = require("socket.io");
 
@@ -106,7 +107,7 @@ if (!process.env.MONGODB_URI) {
 }
 
 // -----------------------------
-// Socket.io
+// Real-time setup (Hybrid: Socket.io + Pusher)
 // -----------------------------
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -118,34 +119,68 @@ const io = new Server(server, {
 	transports: ["websocket", "polling"],
 });
 
-// Attach auth context to sockets (non-fatal)
-io.use(async (socket, next) => {
-	try {
-		const authHeader = socket.handshake.headers?.authorization || "";
-		const headerToken =
-			typeof authHeader === "string" && authHeader.startsWith("Bearer ")
-				? authHeader.slice(7)
-				: null;
+const pusher = new Pusher({
+	appId: process.env.PUSHER_APP_ID,
+	key: process.env.PUSHER_KEY,
+	secret: process.env.PUSHER_SECRET,
+	cluster: process.env.PUSHER_CLUSTER,
+	useTLS: true,
+});
 
-		const socketToken =
-			typeof socket.handshake.auth?.token === "string"
-				? socket.handshake.auth.token
-				: null;
+// Unified broadcasting helper
+const realtimeDispatcher = {
+	trigger: async (channel, event, payload) => {
+		// 1. Send via Socket.io
+		try {
+			if (io) {
+				// Handle both 'user-123' and 'user:123' style channel names
+				const socketRoom = channel.replace(":", "-");
+				io.to(socketRoom).emit(event, payload);
+				// Also emit to the original name just in case
+				if (socketRoom !== channel) io.to(channel).emit(event, payload);
 
-		const token = socketToken || headerToken;
-
-		if (!token) {
-			socket.data.authContext = null;
-			return next();
+				// Global broadcast for specific events
+				if (channel === "notifications") io.emit(event, payload);
+			}
+		} catch (err) {
+			console.warn("[realtime] Socket.io emit failed:", err.message);
 		}
 
-		socket.data.authContext = await resolveAuthContextFromToken(token);
-		return next();
-	} catch (error) {
-		console.warn("[socket] auth handshake failed:", error?.message || error);
-		socket.data.authContext = null;
-		return next();
+		// 2. Send via Pusher (for production/fallback)
+		try {
+			if (pusher) {
+				const pusherChannel = channel.replace(":", "-");
+				await pusher.trigger(pusherChannel, event, payload);
+			}
+		} catch (err) {
+			console.warn("[realtime] Pusher trigger failed:", err.message);
+		}
 	}
+};
+
+// Simple connection logger for Socket.io
+io.on("connection", (socket) => {
+	console.log(`Socket connected: ${socket.id}`);
+
+	socket.on("joinUserRoom", (data) => {
+		const userId = typeof data === "string" ? data : data?.userId;
+		if (userId) {
+			socket.join(`user-${userId}`);
+			console.log(`Socket ${socket.id} joined user-${userId}`);
+		}
+	});
+
+	socket.on("joinConversationRoom", (data) => {
+		const conversationId = typeof data === "string" ? data : data?.conversationId;
+		if (conversationId) {
+			socket.join(`conversation-${conversationId}`);
+			console.log(`Socket ${socket.id} joined conversation-${conversationId}`);
+		}
+	});
+
+	socket.on("disconnect", () => {
+		console.log(`Socket disconnected: ${socket.id}`);
+	});
 });
 
 // -----------------------------
@@ -167,9 +202,9 @@ app.use("/api/categories", categoryRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api", authRoutes); // Backward compatibility alias for /api/login
 app.use("/api/subscribers", subscriberRoutes);
-app.use("/api/notifications", createNotificationRoutes(io));
-app.use("/api/chat", createChatRoutes(io));
-app.use("/api/stream", createStreamRoutes(io));
+app.use("/api/notifications", createNotificationRoutes(realtimeDispatcher));
+app.use("/api/chat", createChatRoutes(realtimeDispatcher));
+app.use("/api/stream", createStreamRoutes(realtimeDispatcher));
 
 // -----------------------------
 // Uploads (multer)
@@ -215,103 +250,12 @@ app.post(
 app.use(express.static(path.join(projectRoot, "public")));
 
 // -----------------------------
-// Socket event handlers
+// Note: Socket event handlers removed for Pusher migration
 // -----------------------------
-io.on("connection", (socket) => {
-	console.log(`User connected: ${socket.id}`);
-
-	const getSocketUser = () => socket.data?.authContext?.user || null;
-
-	const isPrivilegedSocketUser = () =>
-		["admin", "author"].includes(String(getSocketUser()?.role || "").toLowerCase());
-
-	const resolveSocketArgValue = (payload, key) =>
-		typeof payload === "string"
-			? payload
-			: payload && typeof payload === "object"
-				? payload[key]
-				: null;
-
-	const ackError = (ack, message) => {
-		if (typeof ack === "function") ack({ success: false, message });
-	};
-
-	const ackSuccess = (ack, room) => {
-		if (typeof ack === "function") ack({ success: true, room });
-	};
-
-	socket.on("sendNotification", (data) => {
-		console.log(`Notification received: ${data?.message}`);
-		io.emit("receiveNotification", data);
-	});
-
-	socket.on("joinUserRoom", (payload, ack) => {
-		const userId = resolveSocketArgValue(payload, "userId");
-		if (!userId) return ackError(ack, "userId is required");
-
-		const authUser = getSocketUser();
-		const isAllowed =
-			authUser &&
-			(String(authUser.id) === String(userId) || isPrivilegedSocketUser());
-
-		if (!isAllowed) return ackError(ack, "Insufficient permissions");
-
-		socket.join(`user:${userId}`);
-		return ackSuccess(ack, `user:${userId}`);
-	});
-
-	socket.on("leaveUserRoom", (payload, ack) => {
-		const userId = resolveSocketArgValue(payload, "userId");
-		if (!userId) return ackError(ack, "userId is required");
-
-		socket.leave(`user:${userId}`);
-		return ackSuccess(ack, `user:${userId}`);
-	});
-
-	socket.on("joinConversationRoom", async (payload, ack) => {
-		try {
-			const conversationId = resolveSocketArgValue(payload, "conversationId");
-			if (!conversationId) return ackError(ack, "conversationId is required");
-
-			const authUser = getSocketUser();
-			if (!authUser) return ackError(ack, "Authentication required");
-
-			const conversation = await ChatConversation.findOne({
-				id: String(conversationId),
-			});
-			if (!conversation) return ackError(ack, "Conversation not found");
-
-			const isMember = (conversation.member_ids || []).some(
-				(memberId) => String(memberId) === String(authUser.id)
-			);
-
-			if (!isMember && !isPrivilegedSocketUser())
-				return ackError(ack, "Insufficient permissions");
-
-			socket.join(`conversation:${conversationId}`);
-			return ackSuccess(ack, `conversation:${conversationId}`);
-		} catch (error) {
-			console.error("[socket] joinConversationRoom failed:", error);
-			return ackError(ack, "Failed to join conversation room");
-		}
-	});
-
-	socket.on("leaveConversationRoom", (payload, ack) => {
-		const conversationId = resolveSocketArgValue(payload, "conversationId");
-		if (!conversationId) return ackError(ack, "conversationId is required");
-
-		socket.leave(`conversation:${conversationId}`);
-		return ackSuccess(ack, `conversation:${conversationId}`);
-	});
-
-	socket.on("disconnect", () => {
-		console.log(`User disconnected: ${socket.id}`);
-	});
-});
 
 // Health check
-app.get("/socket.io/test", (req, res) => {
-	res.status(200).json({ success: true, message: "WebSocket server is running!" });
+app.get("/api/pusher/test", (req, res) => {
+	res.status(200).json({ success: true, message: "Pusher is configured!" });
 });
 
 // -----------------------------
@@ -489,11 +433,12 @@ app.get("/api/currently-online", requireAdminOrAuthor, async (req, res) => {
 });
 
 // -----------------------------
-// Start server (only if run directly)
+// Start server
 // -----------------------------
 if (require.main === module) {
+	// Use http server to support Socket.io
 	server.listen(port, () => {
-		console.log(`Server is running on port ${port}`);
+		console.log(`Server (Hybrid) is running on port ${port}`);
 	});
 }
 
