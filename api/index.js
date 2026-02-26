@@ -474,4 +474,8 @@ if (require.main === module) {
 	});
 }
 
-module.exports = { app, server, io, mongoose };
+module.exports = app;
+module.exports.app = app;
+module.exports.server = server;
+module.exports.io = io;
+module.exports.mongoose = mongoose;
