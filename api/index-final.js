@@ -157,6 +157,19 @@ const createBlogPostsTable = async () => {
       )
     `;
     console.log('✅ Blog posts table ready');
+    
+    // Add sample data if table is empty
+    const existingPosts = await sql`SELECT COUNT(*) as count FROM blog_posts`;
+    if (existingPosts[0].count === 0) {
+      console.log('📝 Adding sample data to Neon...');
+      await sql`
+        INSERT INTO blog_posts (id, title, excerpt, content, category, subcategory, read_time, image, author, status, likes, downloads, tags)
+        VALUES 
+          (1, 'Getting Started with Web Development', 'A comprehensive guide to begin your journey in web development', 'Web development is an exciting field that combines creativity with technical skills...', 'Technology', 'Web Dev', '5 min read', 'https://via.placeholder.com/300x200', 'Chris Tan', 'published', 42, 15, '["web development", "beginner", "tutorial"]'),
+          (2, 'Understanding CORS in Modern Web Apps', 'Learn how Cross-Origin Resource Sharing works and how to configure it properly', 'CORS is a security mechanism that browsers implement to protect users...', 'Technology', 'Security', '8 min read', 'https://via.placeholder.com/300x200', 'Chris Tan', 'published', 28, 8, '["cors", "security", "web development"]')
+      `;
+      console.log('✅ Sample data added to Neon');
+    }
   } catch (error) {
     console.log('❌ Table creation failed:', error.message);
   }
