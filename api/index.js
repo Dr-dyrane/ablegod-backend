@@ -111,11 +111,7 @@ if (!process.env.MONGODB_URI) {
 // -----------------------------
 const server = http.createServer(app);
 const io = new Server(server, {
-	cors: {
-		origin: (origin, cb) => corsOptions.origin(origin, cb),
-		methods: ["GET", "POST"],
-		credentials: true,
-	},
+	cors: corsOptions,
 	transports: ["websocket", "polling"],
 });
 
