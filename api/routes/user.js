@@ -1,5 +1,6 @@
 // api/routes/user.js
 const express = require("express");
+const mongoose = require("mongoose");
 const router = express.Router();
 const User = require("../models/user");
 const Follow = require("../models/follow");
@@ -39,11 +40,20 @@ router.get("/:id/profile", ...requireSelfOrAdmin("id"), async (req, res) => {
 			return res.status(404).json({ error: "User not found" });
 		}
 
-		// Mock activity data if not fully implemented in DB yet
+		const userId = String(user.id);
+
+		// Fetch real activity data
+		const [posts, comments, reactions] = await Promise.all([
+			mongoose.model("StreamPost").find({ author_user_id: userId }).sort({ created_at: -1 }).limit(20),
+			mongoose.model("StreamReply").find({ author_user_id: userId }).sort({ created_at: -1 }).limit(20),
+			mongoose.model("StreamReaction").find({ user_id: userId }).sort({ created_at: -1 }).limit(20)
+		]);
+
 		const activity = {
-			comments: [],
-			likes: [],
-			downloads: []
+			posts: posts || [],
+			comments: comments || [],
+			likes: reactions.filter(r => r.reaction_type === 'like') || [],
+			downloads: [] // Still mock if no model for downloads yet
 		};
 
 		res.json({ profile: user, ...activity });
@@ -93,12 +103,12 @@ router.get("/", ...requireAdmin, async (req, res) => {
 router.get("/lookup", async (req, res, next) => {
 	// Public endpoint - no authentication required for user discovery
 	// This allows users to find and discover other users publicly
-	
+
 	// Continue with the lookup logic
 	try {
 		const { search } = req.query;
 		let query = {};
-		
+
 		if (search) {
 			const searchStr = String(search);
 			query = {
@@ -109,7 +119,7 @@ router.get("/lookup", async (req, res, next) => {
 				]
 			};
 		}
-		
+
 		const users = await User.find(query).limit(20);
 		res.json(users);
 	} catch (error) {
@@ -350,54 +360,62 @@ router.get("/suggestions", requireCapabilities("user:read"), async (req, res) =>
 		// Get suggested users with smart algorithm
 		const suggestions = await User.aggregate([
 			// Exclude already followed users and self
-			{ $match: { 
-				_id: { $nin: excludedIds.map(id => typeof id === 'string' ? new mongoose.Types.ObjectId(id) : id) },
-				status: 'active'
-			}},
-			
+			{
+				$match: {
+					_id: { $nin: excludedIds.map(id => typeof id === 'string' ? new mongoose.Types.ObjectId(id) : id) },
+					status: 'active'
+				}
+			},
+
 			// Add mutual followers count
 			{
 				$lookup: {
 					from: 'follows',
 					let: { userId: '$_id' },
 					pipeline: [
-						{ $match: { 
-							following_id: '$$userId',
-							follower_id: { $in: following.map(id => typeof id === 'string' ? new mongoose.Types.ObjectId(id) : id) }
-						}},
+						{
+							$match: {
+								following_id: '$$userId',
+								follower_id: { $in: following.map(id => typeof id === 'string' ? new mongoose.Types.ObjectId(id) : id) }
+							}
+						},
 						{ $count: 'mutual_count' }
 					],
 					as: 'mutual_followers'
 				}
 			},
-			
+
 			// Add is_following field (will be false for suggestions)
-			{ $addFields: {
-				mutual_followers: { $ifNull: [{ $arrayElemAt: ['$mutual_followers.mutual_count', 0] }, 0] },
-				is_following: false
-			}},
-			
+			{
+				$addFields: {
+					mutual_followers: { $ifNull: [{ $arrayElemAt: ['$mutual_followers.mutual_count', 0] }, 0] },
+					is_following: false
+				}
+			},
+
 			// Sort by mutual followers first, then by follower count
 			{ $sort: { mutual_followers: -1, followers_count: -1 } },
-			
+
 			// Limit results
 			{ $limit: limit },
-			
+
 			// Project final fields
-			{ $project: {
-				id: '$_id',
-				name: 1,
-				username: 1,
-				email: 1,
-				avatar_url: 1,
-				bio: 1,
-				followers_count: 1,
-				following_count: 1,
-				mutual_followers: 1,
-				is_following: 1,
-				verified: { $ifNull: ['$verified', false] },
-				created_at: 1
-			}}
+			{
+				$project: {
+					id: '$_id',
+					name: 1,
+					username: 1,
+					email: 1,
+					avatar_url: 1,
+					bio: 1,
+					followers_count: 1,
+					following_count: 1,
+					mutual_followers: 1,
+					is_following: 1,
+					verified: { $ifNull: ['$verified', false] },
+					created_at: 1
+				}
+			}
 		]);
 
 		res.json({
@@ -440,7 +458,7 @@ router.get("/:id/followers", requireCapabilities("user:read"), async (req, res) 
 		const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
 		const followers = await Follow.getFollowers(userId, limit, offset);
-		
+
 		const users = followers.map(follow => ({
 			id: follow.follower_id._id,
 			name: follow.follower_id.name,
@@ -469,7 +487,7 @@ router.get("/:id/following", requireCapabilities("user:read"), async (req, res) 
 		const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
 		const following = await Follow.getFollowing(userId, limit, offset);
-		
+
 		const users = following.map(follow => ({
 			id: follow.following_id._id,
 			name: follow.following_id.name,
