@@ -322,10 +322,18 @@ const seedDatabase = async () => {
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/ablegod');
     console.log('✅ Connected to MongoDB');
     
-    // Clear existing data
-    console.log('🧹 Clearing existing data...');
+    // Clear existing data - WARNING: This will delete ALL users and follows!
+    console.log('\n⚠️  WARNING: This will DELETE ALL existing users and follow relationships!');
+    console.log('📝 This includes all real users, blog posts, and user data!');
+    console.log('💡 To cancel, press Ctrl+C within 10 seconds...');
+    
+    // Wait 10 seconds to allow cancellation
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    
+    console.log('🧹 Proceeding with data clearance...');
     await User.deleteMany({});
     await Follow.deleteMany({});
+    console.log('✅ Cleared all existing users and follows');
     
     // Hash passwords for all users
     const hashedPassword = await bcrypt.hash('password123', 10);

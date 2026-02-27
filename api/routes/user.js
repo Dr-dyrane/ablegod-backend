@@ -91,25 +91,8 @@ router.get("/", ...requireAdmin, async (req, res) => {
 });
 
 router.get("/lookup", async (req, res, next) => {
-	// First authenticate
-	try {
-		const token = req.headers.authorization?.replace("Bearer ", "");
-		if (!token) {
-			return res.status(401).json({ error: "Authentication required" });
-		}
-		
-		const jwt = require("jsonwebtoken");
-		const User = require("../models/user");
-		const secret = process.env.JWT_SECRET || "ablegod-dev-secret-change-me";
-		const decoded = jwt.verify(token, secret);
-		
-		// Allow any authenticated user to lookup other users for chat/messaging
-		if (!decoded.user) {
-			return res.status(401).json({ error: "Invalid token" });
-		}
-	} catch (error) {
-		return res.status(401).json({ error: "Authentication failed" });
-	}
+	// Public endpoint - no authentication required for user discovery
+	// This allows users to find and discover other users publicly
 	
 	// Continue with the lookup logic
 	try {
