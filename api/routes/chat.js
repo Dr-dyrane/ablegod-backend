@@ -4,6 +4,7 @@ const ChatConversation = require("../models/chatConversation");
 const ChatMessage = require("../models/chatMessage");
 const ChatIdentityKey = require("../models/chatIdentityKey");
 const User = require("../models/user");
+const Notification = require("../models/notification");
 const { requireCapabilities, authenticate } = require("../middleware/auth");
 
 function createChatRoutes(pusher) {
@@ -74,6 +75,22 @@ function createChatRoutes(pusher) {
 			conversation_id: conversation.id,
 			message,
 		});
+	};
+
+	const emitNotificationEvent = (notification) => {
+		if (!pusher || !notification?.user_id) return;
+		const payload = {
+			id: notification.id,
+			type: notification.type,
+			message: notification.message,
+			post_id: notification.post_id ?? null,
+			post_title: notification.post_title || "",
+			is_read: notification.is_read,
+			created_at: notification.created_at,
+			user_id: notification.user_id,
+			metadata: notification.metadata || {},
+		};
+		pusher.trigger(`user-${notification.user_id}`, "notification:new", payload);
 	};
 
 	router.get("/identity-keys/me", ...requireChatRead, async (req, res) => {
@@ -401,6 +418,33 @@ function createChatRoutes(pusher) {
 			await req.chatConversation.save();
 
 			emitChatMessage(req.chatConversation, message);
+
+			// Send new message notification to other members
+			const senderName = [String(req.auth.user.first_name || ""), String(req.auth.user.last_name || "")].filter(Boolean).join(" ").trim() || req.auth.user.username || "Someone";
+
+			for (const memberId of (req.chatConversation.member_ids || [])) {
+				if (String(memberId) === authUserId) continue;
+
+				const notification = new Notification({
+					id: uuidv4(),
+					user_id: String(memberId),
+					type: "system",
+					message: `New message from ${senderName}`,
+					post_id: null,
+					post_title: "",
+					metadata: {
+						kind: "chat_message",
+						conversation_id: req.chatConversation.id,
+						sender_id: authUserId,
+						sender_name: senderName,
+					},
+					is_read: false,
+					created_at: now,
+				});
+
+				await notification.save().catch(console.error);
+				emitNotificationEvent(notification);
+			}
 
 			return res.status(201).json({ success: true, message });
 		} catch (error) {
