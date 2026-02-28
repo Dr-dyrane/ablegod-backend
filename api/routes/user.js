@@ -34,7 +34,8 @@ const findUserFlexible = async (rawId) => {
 // Get User Profile
 router.get("/:id/profile", ...requireSelfOrAdmin("id"), async (req, res) => {
 	try {
-		const { user } = await findUserFlexible(req.params.id);
+		const targetId = req.params.id === "me" ? req.auth.user.id : req.params.id;
+		const { user } = await findUserFlexible(targetId);
 
 		if (!user) {
 			return res.status(404).json({ error: "User not found" });
@@ -66,7 +67,8 @@ router.get("/:id/profile", ...requireSelfOrAdmin("id"), async (req, res) => {
 // Update User Profile
 router.put("/:id/profile", ...requireSelfOrAdmin("id"), async (req, res) => {
 	try {
-		const { user, query } = await findUserFlexible(req.params.id);
+		const targetId = req.params.id === "me" ? req.auth.user.id : req.params.id;
+		const { user, query } = await findUserFlexible(targetId);
 		if (!user) {
 			return res.status(404).json({ error: "User not found" });
 		}

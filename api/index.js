@@ -201,6 +201,7 @@ app.use("/api/subscribers", subscriberRoutes);
 app.use("/api/notifications", createNotificationRoutes(realtimeDispatcher));
 app.use("/api/chat", createChatRoutes(realtimeDispatcher));
 app.use("/api/stream", createStreamRoutes(realtimeDispatcher));
+app.use("/api/ai", require("./routes/ai"));
 
 // -----------------------------
 // Uploads (multer)

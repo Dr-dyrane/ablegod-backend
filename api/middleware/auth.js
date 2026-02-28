@@ -184,7 +184,7 @@ function authorizeSelfOrRoles({
 			? userIdResolver(req)
 			: req.params?.[paramKey];
 
-		const isSelf = String(authUser.id) === String(targetId);
+		const isSelf = String(authUser.id) === String(targetId) || targetId === "me";
 		const hasRoleAccess = roles.includes(authUser.role);
 
 		if (!isSelf && !hasRoleAccess) {

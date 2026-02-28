@@ -37,6 +37,11 @@ const userSchema = new mongoose.Schema({
 			details: String,
 		},
 	],
+	ai_settings: {
+		openai_key: String,
+		anthropic_key: String,
+		preferred_model: { type: String, default: 'gpt-4o-mini' },
+	},
 });
 
 module.exports = mongoose.model("User", userSchema);

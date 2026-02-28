@@ -11,6 +11,7 @@ const StreamModerationAction = require("../models/streamModerationAction");
 const Notification = require("../models/notification");
 const User = require("../models/user");
 const { requireCapabilities } = require("../middleware/auth");
+const AIService = require("../services/aiService");
 
 function createStreamRoutes(pusher) {
 	const router = express.Router();
@@ -647,6 +648,34 @@ function createStreamRoutes(pusher) {
 				return res.status(400).json({ success: false, message: "content is required" });
 			}
 
+			// AI SPIRITUAL MODERATION
+			try {
+				const userRecord = await User.findOne({ id: authUser.id });
+				let aiSettings = userRecord?.ai_settings || {};
+
+				// Fallback to admin settings if user has no keys
+				if (!aiSettings.openai_key && !aiSettings.anthropic_key) {
+					const admin = await User.findOne({ role: "admin" }).sort({ createdAt: 1 });
+					if (admin?.ai_settings) {
+						aiSettings = admin.ai_settings;
+					}
+				}
+
+				if (aiSettings.openai_key || aiSettings.anthropic_key) {
+					const moderation = await AIService.moderateContent(normalizedContent, aiSettings);
+					if (moderation && !moderation.is_worthy) {
+						return res.status(400).json({
+							success: false,
+							code: "AI_SPIRITUAL_WARNING",
+							message: moderation.reason || "We plead with you to act in ways that serve God and the community."
+						});
+					}
+				}
+			} catch (aiErr) {
+				console.error("AI Moderation Pre-check failed:", aiErr);
+				// We fail open to avoid technical disruption, but log the error.
+			}
+
 			const now = new Date().toISOString();
 			const post = new StreamPost({
 				id: uuidv4(),
@@ -1059,6 +1088,46 @@ function createStreamRoutes(pusher) {
 		} catch (error) {
 			console.error("Error creating stream reply:", error);
 			return res.status(500).json({ success: false, message: "Failed to create reply" });
+		}
+	});
+
+	router.patch("/posts/:postId/replies/:replyId", ...requirePostInteract, async (req, res) => {
+		try {
+			const authUser = req.auth.user;
+			const { postId, replyId } = req.params;
+			const { content, reason = "User edit" } = req.body || {};
+
+			const reply = await StreamReply.findOne({ id: replyId, post_id: postId });
+			if (!reply) {
+				return res.status(404).json({ success: false, message: "Reply not found" });
+			}
+
+			// Check ownership
+			if (String(reply.author_user_id) !== String(authUser.id) && authUser.role !== "admin") {
+				return res.status(403).json({ success: false, message: "Unauthorized to edit this reply" });
+			}
+
+			// Capture current version for edit history
+			if (!reply.edit_history) reply.edit_history = [];
+			reply.edit_history.push({
+				content: reply.content,
+				edited_at: new Date().toISOString(),
+				reason,
+			});
+
+			// Update content
+			if (content !== undefined) reply.content = String(content).trim();
+
+			reply.updated_at = new Date().toISOString();
+
+			await reply.save();
+			return res.json({
+				success: true,
+				reply: serializeReply(reply),
+			});
+		} catch (error) {
+			console.error("Error editing stream reply:", error);
+			return res.status(500).json({ success: false, message: "Failed to edit reply" });
 		}
 	});
 
