@@ -20,6 +20,11 @@ const streamReplySchema = new mongoose.Schema(
 			default: { like: 0, amen: 0, pray: 0 },
 		},
 		metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+		edit_history: [{
+			content: String,
+			edited_at: { type: String, default: () => new Date().toISOString() },
+			reason: String,
+		}],
 		created_at: { type: String, index: true },
 		updated_at: String,
 	},

@@ -23,6 +23,13 @@ const streamPostSchema = new mongoose.Schema(
 		share_count: { type: Number, default: 0 },
 		view_count: { type: Number, default: 0 },
 		metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+		edit_history: [{
+			content: String,
+			title: String,
+			image_url: String,
+			edited_at: { type: String, default: () => new Date().toISOString() },
+			reason: String,
+		}],
 		created_at: { type: String, index: true },
 		updated_at: String,
 	},

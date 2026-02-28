@@ -17,6 +17,7 @@ function createStreamRoutes(pusher) {
 
 	const requireFeedRead = requireCapabilities("stream:read", "feed:read");
 	const requirePostCreate = requireCapabilities("stream:create");
+	const requirePostUpdate = requireCapabilities("stream:create");
 	const requirePostInteract = requireCapabilities("stream:reply", "post:interact");
 	const requireFollowRead = requireCapabilities("follow:read", "stream:read");
 	const requireFollowWrite = requireCapabilities("follow:write");
@@ -82,6 +83,8 @@ function createStreamRoutes(pusher) {
 			is_bookmarked: Boolean(options.viewerBookmark),
 			is_restreamed: Boolean(options.viewerRestream),
 			metadata: post.metadata || {},
+			is_edited: post.edit_history && post.edit_history.length > 0,
+			edit_history: post.edit_history || [],
 			created_at: post.created_at,
 			updated_at: post.updated_at,
 		};
@@ -675,6 +678,59 @@ function createStreamRoutes(pusher) {
 		} catch (error) {
 			console.error("Error creating stream post:", error);
 			return res.status(500).json({ success: false, message: "Failed to create stream post" });
+		}
+	});
+
+	router.patch("/posts/:id", ...requirePostUpdate, async (req, res) => {
+		try {
+			const authUser = req.auth.user;
+			const { id } = req.params;
+			const { title, content, image_url, imageUrl, reason = "User edit" } = req.body || {};
+
+			const post = await StreamPost.findOne({ id });
+			if (!post) {
+				return res.status(404).json({ success: false, message: "Post not found" });
+			}
+
+			// Check ownership
+			if (String(post.author_user_id) !== String(authUser.id) && authUser.role !== "admin") {
+				return res.status(403).json({ success: false, message: "Unauthorized to edit this post" });
+			}
+
+			// Capture current version for edit history
+			if (!post.edit_history) post.edit_history = [];
+			post.edit_history.push({
+				content: post.content,
+				title: post.title,
+				image_url: post.image_url,
+				edited_at: new Date().toISOString(),
+				reason,
+			});
+
+			// Update content
+			if (content !== undefined) post.content = String(content).trim();
+			if (title !== undefined) post.title = String(title).trim();
+
+			const finalImageUrl = String(image_url || imageUrl || "").trim();
+			if (image_url !== undefined || imageUrl !== undefined) {
+				post.image_url = finalImageUrl;
+			}
+
+			post.updated_at = new Date().toISOString();
+
+			// Update excerpt if content changed
+			if (content !== undefined) {
+				post.excerpt = post.content.slice(0, 180).replace(/\s+/g, " ").trim();
+			}
+
+			await post.save();
+			return res.json({
+				success: true,
+				post: serializePost(post),
+			});
+		} catch (error) {
+			console.error("Error updating stream post:", error);
+			return res.status(500).json({ success: false, message: "Failed to update stream post" });
 		}
 	});
 
