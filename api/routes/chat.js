@@ -379,7 +379,7 @@ function createChatRoutes(pusher) {
 				sender_id: authUserId,
 				content_type: String(content_type || "text"),
 				algorithm: String(algorithm || "AES-GCM-256"),
-				key_id: String(key_id || keyId || ""),
+				key_id: String(key_id || ""),
 				ciphertext: String(ciphertext || ""), // Empty for plain messages
 				iv: String(iv || ""), // Empty for plain messages
 				aad: String(aad || ""),
@@ -403,8 +403,8 @@ function createChatRoutes(pusher) {
 
 			return res.status(201).json({ success: true, message });
 		} catch (error) {
-			console.error("Error sending chat message:", error);
-			return res.status(500).json({ success: false, message: "Failed to send message" });
+			console.error("Error creating chat message:", error);
+			return res.status(500).json({ success: false, message: "Failed to create message" });
 		}
 	});
 
