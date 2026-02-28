@@ -4,12 +4,13 @@ const streamRestreamSchema = new mongoose.Schema(
     {
         id: { type: String, index: true, unique: true },
         post_id: { type: String, index: true, required: true },
+        reply_id: { type: String, index: true, default: null },
         user_id: { type: String, index: true, required: true },
         created_at: { type: String, index: true, default: () => new Date().toISOString() },
     },
     { minimize: true }
 );
 
-streamRestreamSchema.index({ post_id: 1, user_id: 1 }, { unique: true });
+streamRestreamSchema.index({ post_id: 1, reply_id: 1, user_id: 1 }, { unique: true });
 
 module.exports = mongoose.model("StreamRestream", streamRestreamSchema);

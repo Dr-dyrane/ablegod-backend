@@ -11,6 +11,10 @@ const streamReplySchema = new mongoose.Schema(
 		content: String,
 		status: { type: String, default: "published" },
 		like_count: { type: Number, default: 0 },
+		restream_count: { type: Number, default: 0 },
+		bookmark_count: { type: Number, default: 0 },
+		share_count: { type: Number, default: 0 },
+		view_count: { type: Number, default: 0 },
 		reaction_counts: {
 			type: mongoose.Schema.Types.Mixed,
 			default: { like: 0, amen: 0, pray: 0 },
