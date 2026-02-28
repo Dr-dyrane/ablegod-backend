@@ -260,8 +260,24 @@ function createChatRoutes(pusher) {
 				return res.status(400).json({ success: false, message: "Conversation must include at least two members" });
 			}
 
+			// Allow unrestricted chat without key envelopes
 			if (!Array.isArray(memberKeyEnvelopes) || memberKeyEnvelopes.length === 0) {
-				return res.status(400).json({ success: false, message: "memberKeyEnvelopes are required for E2EE conversations" });
+				// Create unrestricted conversation without encryption
+				const now = new Date().toISOString();
+				const conversation = new ChatConversation({
+					id: uuidv4(),
+					type: normalizedType,
+					name: String(name || ""),
+					member_ids: normalizedMembers,
+					created_by: authUserId,
+					created_at: now,
+					updated_at: now,
+					member_key_envelopes: [], // Empty for unrestricted chat
+					metadata: metadata,
+				});
+
+				await conversation.save();
+				return res.json({ success: true, conversation, unrestricted: true });
 			}
 
 			const existingDirect =
@@ -344,15 +360,16 @@ function createChatRoutes(pusher) {
 				content_type = "text",
 				algorithm = "AES-GCM-256",
 				key_id = "",
-				keyId,
 				ciphertext,
 				iv,
 				aad = "",
+				content, // Allow plain content for unrestricted chat
 				metadata = {},
 			} = req.body || {};
 
-			if (!ciphertext || !iv) {
-				return res.status(400).json({ success: false, message: "ciphertext and iv are required" });
+			// Handle both encrypted and plain messages
+			if (!ciphertext && !content) {
+				return res.status(400).json({ success: false, message: "Either ciphertext or content is required" });
 			}
 
 			const now = new Date().toISOString();
@@ -363,9 +380,10 @@ function createChatRoutes(pusher) {
 				content_type: String(content_type || "text"),
 				algorithm: String(algorithm || "AES-GCM-256"),
 				key_id: String(key_id || keyId || ""),
-				ciphertext: String(ciphertext),
-				iv: String(iv),
+				ciphertext: String(ciphertext || ""), // Empty for plain messages
+				iv: String(iv || ""), // Empty for plain messages
 				aad: String(aad || ""),
+				content: String(content || ""), // Plain content for unrestricted chat
 				metadata,
 				created_at: now,
 			});
