@@ -3,6 +3,8 @@ const { v4: uuidv4 } = require("uuid");
 const StreamPost = require("../models/streamPost");
 const StreamReply = require("../models/streamReply");
 const StreamReaction = require("../models/streamReaction");
+const StreamBookmark = require("../models/streamBookmark");
+const StreamRestream = require("../models/streamRestream");
 const StreamFollow = require("../models/streamFollow");
 const StreamReport = require("../models/streamReport");
 const StreamModerationAction = require("../models/streamModerationAction");
@@ -71,8 +73,14 @@ function createStreamRoutes(pusher) {
 			status: String(post.status || "published"),
 			reply_count: Number(post.reply_count || 0),
 			like_count: Number(post.like_count || totalReactions),
+			bookmark_count: Number(post.bookmark_count || 0),
+			restream_count: Number(post.restream_count || 0),
+			share_count: Number(post.share_count || 0),
+			view_count: Number(post.view_count || 0),
 			reaction_counts: reactionCounts,
 			viewer_reaction: options.viewerReaction ? String(options.viewerReaction) : null,
+			is_bookmarked: Boolean(options.viewerBookmark),
+			is_restreamed: Boolean(options.viewerRestream),
 			metadata: post.metadata || {},
 			created_at: post.created_at,
 			updated_at: post.updated_at,
@@ -468,6 +476,20 @@ function createStreamRoutes(pusher) {
 		);
 	};
 
+	const buildViewerBookmarkSet = async ({ userId, postIds }) => {
+		const ids = Array.isArray(postIds) ? [...new Set(postIds.map(String).filter(Boolean))] : [];
+		if (!userId || ids.length === 0) return new Set();
+		const bookmarks = await StreamBookmark.find({ user_id: String(userId), post_id: { $in: ids } }, { post_id: 1 });
+		return new Set(bookmarks.map(b => String(b.post_id)));
+	};
+
+	const buildViewerRestreamSet = async ({ userId, postIds }) => {
+		const ids = Array.isArray(postIds) ? [...new Set(postIds.map(String).filter(Boolean))] : [];
+		if (!userId || ids.length === 0) return new Set();
+		const restreams = await StreamRestream.find({ user_id: String(userId), post_id: { $in: ids } }, { post_id: 1 });
+		return new Set(restreams.map(r => String(r.post_id)));
+	};
+
 	const recomputeTargetReactionCounts = async ({ targetType, targetId }) => {
 		const reactions = await StreamReaction.find({
 			target_type: String(targetType),
@@ -559,20 +581,36 @@ function createStreamRoutes(pusher) {
 					feedContext.mode = "fallback";
 					feedContext.followingCount = followingSet.size;
 				}
+			} else if (feed === "bookmarks" && authUserId) {
+				const bookmarks = await StreamBookmark.find({ user_id: String(authUserId) }).sort({ created_at: -1 });
+				const bookmarkPostIds = bookmarks.map(b => String(b.post_id));
+				posts = await StreamPost.find({ id: { $in: bookmarkPostIds }, ...query });
+
+				// Re-sort them based on bookmark order
+				const postMap = new Map(posts.map(p => [String(p.id), p]));
+				posts = bookmarkPostIds.map(id => postMap.get(id)).filter(Boolean);
 			}
-			const sortedPosts = sortPostsForFeed(posts, feed, authUserId).slice(0, limit);
-			const viewerReactionMap = await buildViewerReactionMap({
-				userId: authUserId,
-				targetType: "post",
-				targetIds: sortedPosts.map((post) => post.id),
-			});
+
+			const sortedPosts = feed === "bookmarks" ? posts.slice(0, limit) : sortPostsForFeed(posts, feed, authUserId).slice(0, limit);
+
+			const targetIds = sortedPosts.map((post) => post.id);
+
+			const [viewerReactionMap, viewerBookmarkSet, viewerRestreamSet] = await Promise.all([
+				buildViewerReactionMap({ userId: authUserId, targetType: "post", targetIds }),
+				buildViewerBookmarkSet({ userId: authUserId, postIds: targetIds }),
+				buildViewerRestreamSet({ userId: authUserId, postIds: targetIds })
+			]);
 
 			return res.json({
 				success: true,
 				feed,
 				feed_context: feedContext,
 				posts: sortedPosts.map((post) =>
-					serializePost(post, { viewerReaction: viewerReactionMap.get(String(post.id)) })
+					serializePost(post, {
+						viewerReaction: viewerReactionMap.get(String(post.id)),
+						viewerBookmark: viewerBookmarkSet.has(String(post.id)),
+						viewerRestream: viewerRestreamSet.has(String(post.id)),
+					})
 				),
 			});
 		} catch (error) {
@@ -829,14 +867,22 @@ function createStreamRoutes(pusher) {
 			if (!post) {
 				return res.status(404).json({ success: false, message: "Stream post not found" });
 			}
-			const viewerReactionMap = await buildViewerReactionMap({
-				userId: req.auth?.user?.id,
-				targetType: "post",
-				targetIds: [post.id],
-			});
+			const authUserId = req.auth?.user?.id;
+			const targetIds = [String(post.id)];
+
+			const [viewerReactionMap, viewerBookmarkSet, viewerRestreamSet] = await Promise.all([
+				buildViewerReactionMap({ userId: authUserId, targetType: "post", targetIds }),
+				buildViewerBookmarkSet({ userId: authUserId, postIds: targetIds }),
+				buildViewerRestreamSet({ userId: authUserId, postIds: targetIds })
+			]);
+
 			return res.json({
 				success: true,
-				post: serializePost(post, { viewerReaction: viewerReactionMap.get(String(post.id)) }),
+				post: serializePost(post, {
+					viewerReaction: viewerReactionMap.get(String(post.id)),
+					viewerBookmark: viewerBookmarkSet.has(String(post.id)),
+					viewerRestream: viewerRestreamSet.has(String(post.id))
+				}),
 			});
 		} catch (error) {
 			console.error("Error fetching stream post:", error);
@@ -1230,6 +1276,85 @@ function createStreamRoutes(pusher) {
 		} catch (error) {
 			console.error("Error reacting to stream reply:", error);
 			return res.status(500).json({ success: false, message: "Failed to update reaction" });
+		}
+	});
+
+	router.post("/posts/:id/bookmark", ...requirePostInteract, async (req, res) => {
+		try {
+			const authUser = req.auth.user;
+			const postId = String(req.params.id || "");
+			const post = await StreamPost.findOne({ id: postId });
+			if (!post) return res.status(404).json({ success: false, message: "Stream post not found" });
+
+			const existing = await StreamBookmark.findOne({ post_id: postId, user_id: String(authUser.id) });
+			let isBookmarked = false;
+			if (existing) {
+				await existing.deleteOne();
+				post.bookmark_count = Math.max(0, (post.bookmark_count || 0) - 1);
+			} else {
+				await new StreamBookmark({ id: uuidv4(), post_id: postId, user_id: String(authUser.id) }).save();
+				post.bookmark_count = (post.bookmark_count || 0) + 1;
+				isBookmarked = true;
+			}
+			await post.save();
+			return res.json({ success: true, is_bookmarked: isBookmarked, count: post.bookmark_count });
+		} catch (error) {
+			console.error("Error bookmarking post:", error);
+			return res.status(500).json({ success: false, message: "Failed to update bookmark" });
+		}
+	});
+
+	router.post("/posts/:id/restream", ...requirePostInteract, async (req, res) => {
+		try {
+			const authUser = req.auth.user;
+			const postId = String(req.params.id || "");
+			const post = await StreamPost.findOne({ id: postId });
+			if (!post) return res.status(404).json({ success: false, message: "Stream post not found" });
+
+			const existing = await StreamRestream.findOne({ post_id: postId, user_id: String(authUser.id) });
+			let isRestreamed = false;
+			if (existing) {
+				await existing.deleteOne();
+				post.restream_count = Math.max(0, (post.restream_count || 0) - 1);
+			} else {
+				await new StreamRestream({ id: uuidv4(), post_id: postId, user_id: String(authUser.id) }).save();
+				post.restream_count = (post.restream_count || 0) + 1;
+				isRestreamed = true;
+			}
+			await post.save();
+			return res.json({ success: true, is_restreamed: isRestreamed, count: post.restream_count });
+		} catch (error) {
+			console.error("Error restreaming post:", error);
+			return res.status(500).json({ success: false, message: "Failed to update restream" });
+		}
+	});
+
+	router.post("/posts/:id/share", ...requirePostInteract, async (req, res) => {
+		try {
+			const postId = String(req.params.id || "");
+			const post = await StreamPost.findOne({ id: postId });
+			if (!post) return res.status(404).json({ success: false, message: "Stream post not found" });
+
+			post.share_count = (post.share_count || 0) + 1;
+			await post.save();
+			return res.json({ success: true, count: post.share_count });
+		} catch (error) {
+			console.error("Error sharing post:", error);
+			return res.status(500).json({ success: false, message: "Failed to update share count" });
+		}
+	});
+
+	router.post("/posts/:id/view", ...requireFeedRead, async (req, res) => {
+		try {
+			const postId = String(req.params.id || "");
+			const post = await StreamPost.findOne({ id: postId });
+			if (!post) return res.status(404).json({ success: false, message: "Stream post not found" });
+
+			post.view_count = (post.view_count || 0) + 1;
+			await post.save();
+			return res.json({ success: true, count: post.view_count });
+		} catch (error) {
+			return res.status(500).json({ success: false, message: "Failed to update view count" });
 		}
 	});
 
