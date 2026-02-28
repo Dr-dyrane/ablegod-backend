@@ -6,6 +6,7 @@ const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 const router = express.Router();
 const User = require("../models/user");
+const RefreshToken = require("../models/refreshToken");
 const { sendEmail } = require("../../utils/mailer");
 const {
 	authenticate,
@@ -71,18 +72,26 @@ function buildCapabilitiesForRole(role) {
 	return base;
 }
 
-function issueAuthResponse(user) {
+async function issueAuthResponse(user) {
 	const safeUser = sanitizeUser(user);
 	const capabilities = buildCapabilitiesForRole(safeUser.role);
-	const token = jwt.sign(
+	const accessToken = jwt.sign(
 		{
 			sub: String(safeUser.id),
 			role: safeUser.role,
 			capabilities,
 		},
 		getJwtSecret(),
-		{ expiresIn: "7d" }
+		{ expiresIn: "1d" } // Access token: 1 day
 	);
+
+	const refreshTokenValue = crypto.randomBytes(40).toString("hex");
+	const refreshToken = new RefreshToken({
+		token: refreshTokenValue,
+		user_id: String(safeUser.id),
+		expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+	});
+	await refreshToken.save();
 
 	return {
 		success: true,
@@ -91,7 +100,8 @@ function issueAuthResponse(user) {
 			...safeUser,
 			capabilities,
 		},
-		token,
+		token: accessToken,
+		refresh_token: refreshTokenValue,
 	};
 }
 
@@ -237,7 +247,7 @@ router.post("/login", async (req, res) => {
 			}
 		}
 
-		return res.json(issueAuthResponse(user));
+		return res.json(await issueAuthResponse(user));
 	} catch (error) {
 		console.error("Auth login error:", error);
 		return res.status(500).json({
@@ -360,11 +370,11 @@ router.post("/password/forgot", async (req, res) => {
 			message: "If an account exists for that email, a reset link has been sent.",
 			...(process.env.NODE_ENV === "test"
 				? {
-						debug: {
-							reset_token: rawToken,
-							reset_url: resetUrl,
-						},
-				  }
+					debug: {
+						reset_token: rawToken,
+						reset_url: resetUrl,
+					},
+				}
 				: {}),
 		});
 	} catch (error) {
@@ -466,6 +476,124 @@ router.get("/me", authenticate, async (req, res) => {
 			success: false,
 			message: "Failed to fetch session",
 		});
+	}
+});
+
+router.post("/refresh-token", async (req, res) => {
+	try {
+		const { refresh_token } = req.body || {};
+		if (!refresh_token) {
+			return res.status(400).json({ success: false, message: "Refresh token is required" });
+		}
+
+		const storedToken = await RefreshToken.findOne({
+			token: refresh_token,
+			revoked_at: null,
+			expires_at: { $gt: new Date() },
+		});
+
+		if (!storedToken) {
+			return res.status(401).json({ success: false, message: "Invalid or expired refresh token" });
+		}
+
+		const user = await User.findOne({ id: storedToken.user_id });
+		if (!user || user.status === "inactive") {
+			return res.status(401).json({ success: false, message: "User not found or inactive" });
+		}
+
+		// Revoke old token and issue new pair
+		storedToken.revoked_at = new Date();
+		await storedToken.save();
+
+		const authResponse = await issueAuthResponse(user);
+		return res.json(authResponse);
+	} catch (error) {
+		console.error("Refresh token error:", error);
+		return res.status(500).json({ success: false, message: "Failed to refresh token" });
+	}
+});
+
+router.post("/logout", authenticate, async (req, res) => {
+	try {
+		const { refresh_token } = req.body || {};
+		if (refresh_token) {
+			await RefreshToken.updateOne(
+				{ token: refresh_token, user_id: String(req.auth.user.id) },
+				{ $set: { revoked_at: new Date() } }
+			);
+		}
+		return res.json({ success: true, message: "Logged out successfully" });
+	} catch (error) {
+		console.error("Logout error:", error);
+		return res.status(500).json({ success: false, message: "Logout failed" });
+	}
+});
+
+router.post("/password/change", authenticate, async (req, res) => {
+	try {
+		const { current_password, new_password } = req.body || {};
+		const user = await User.findOne({ id: req.auth.user.id });
+
+		if (!user) {
+			return res.status(404).json({ success: false, message: "User not found" });
+		}
+
+		const isValid = await bcrypt.compare(current_password, user.password);
+		if (!isValid) {
+			return res.status(401).json({ success: false, message: "Invalid current password" });
+		}
+
+		if (String(new_password).length < 6) {
+			return res.status(400).json({ success: false, message: "New password too short" });
+		}
+
+		user.password = await bcrypt.hash(String(new_password), 10);
+		await user.save();
+
+		return res.json({ success: true, message: "Password updated successfully" });
+	} catch (error) {
+		console.error("Password change error:", error);
+		return res.status(500).json({ success: false, message: "Failed to change password" });
+	}
+});
+
+router.post("/deactivate", authenticate, async (req, res) => {
+	try {
+		const user = await User.findOne({ id: req.auth.user.id });
+		if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+		user.status = "inactive";
+		await user.save();
+
+		// Revoke all tokens
+		await RefreshToken.updateMany(
+			{ user_id: String(user.id), revoked_at: null },
+			{ $set: { revoked_at: new Date() } }
+		);
+
+		return res.json({ success: true, message: "Account deactivated" });
+	} catch (error) {
+		console.error("Deactivation error:", error);
+		return res.status(500).json({ success: false, message: "Failed to deactivate account" });
+	}
+});
+
+router.post("/request-deletion", authenticate, async (req, res) => {
+	try {
+		const user = await User.findOne({ id: req.auth.user.id });
+		if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+		// Mark for deletion in metadata
+		if (!user.metadata) user.metadata = {};
+		user.metadata.deletion_requested_at = new Date().toISOString();
+		user.status = "pending_deletion";
+		await user.save();
+
+		// Optional: Log a moderation action
+		return res.json({ success: true, message: "Account deletion request received" });
+	} catch (error) {
+		console.error("Deletion request error:", error);
+		return res.status(500).json({ success: false, message: "Failed to request deletion" });
 	}
 });
 
