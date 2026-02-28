@@ -260,6 +260,19 @@ function createChatRoutes(pusher) {
 				return res.status(400).json({ success: false, message: "Conversation must include at least two members" });
 			}
 
+			// Check if a direct conversation already exists between these members
+			const existingDirect =
+				normalizedType === "direct"
+					? await ChatConversation.findOne({
+						type: "direct",
+						member_ids: { $all: normalizedMembers, $size: 2 },
+					})
+					: null;
+
+			if (existingDirect) {
+				return res.json({ success: true, conversation: existingDirect, existing: true });
+			}
+
 			// Allow unrestricted chat without key envelopes
 			if (!Array.isArray(memberKeyEnvelopes) || memberKeyEnvelopes.length === 0) {
 				// Create unrestricted conversation without encryption
@@ -278,18 +291,6 @@ function createChatRoutes(pusher) {
 
 				await conversation.save();
 				return res.json({ success: true, conversation, unrestricted: true });
-			}
-
-			const existingDirect =
-				normalizedType === "direct"
-					? await ChatConversation.findOne({
-						type: "direct",
-						member_ids: { $all: normalizedMembers, $size: 2 },
-					})
-					: null;
-
-			if (existingDirect) {
-				return res.json({ success: true, conversation: existingDirect, existing: true });
 			}
 
 			const now = new Date().toISOString();
@@ -405,6 +406,37 @@ function createChatRoutes(pusher) {
 		} catch (error) {
 			console.error("Error creating chat message:", error);
 			return res.status(500).json({ success: false, message: "Failed to create message" });
+		}
+	});
+
+	router.delete("/conversations/:conversationId", ...requireChatRead, ensureConversationMember, async (req, res) => {
+		try {
+			await ChatConversation.deleteOne({ id: req.chatConversation.id });
+			await ChatMessage.deleteMany({ conversation_id: req.chatConversation.id });
+			return res.json({ success: true, message: "Conversation deleted" });
+		} catch (error) {
+			console.error("Error deleting conversation:", error);
+			return res.status(500).json({ success: false, message: "Failed to delete conversation" });
+		}
+	});
+
+	router.delete("/conversations/:conversationId/messages", ...requireChatSend, ensureConversationMember, async (req, res) => {
+		try {
+			const { messageIds } = req.body || {};
+
+			if (!Array.isArray(messageIds) || messageIds.length === 0) {
+				return res.status(400).json({ success: false, message: "messageIds array is required" });
+			}
+
+			await ChatMessage.deleteMany({
+				id: { $in: messageIds },
+				conversation_id: req.chatConversation.id
+			});
+
+			return res.json({ success: true, message: "Messages deleted" });
+		} catch (error) {
+			console.error("Error deleting messages:", error);
+			return res.status(500).json({ success: false, message: "Failed to delete messages" });
 		}
 	});
 
