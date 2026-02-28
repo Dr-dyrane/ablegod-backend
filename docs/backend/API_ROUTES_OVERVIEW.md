@@ -219,3 +219,45 @@ See `tests/e2e/endpoints.e2e.test.js` for comprehensive endpoint testing includi
 ```
 
 This route design enables seamless chat functionality with both security models while maintaining high performance and scalability.
+
+---
+
+## Stream System Routes (`/api/stream/*`)
+
+The AbleGod Stream platform enables social engagement through reflections, comments, and community interactions.
+
+### Route Structure
+
+```
+/api/stream/
+├── posts/
+│   ├── GET    /           List feed posts (explore/following/bookmarks)
+│   ├── POST   /           Create new stream post
+│   ├── GET    /:id        Get post details & replies
+│   ├── PUT    /:id/reaction Toggle post reaction
+│   ├── POST   /:id/bookmark Toggle post bookmark
+│   ├── POST   /:id/restream Toggle post restream
+│   ├── POST   /:id/share    Increment share count
+│   ├── POST   /:id/view     Increment view count
+│   └── replies/
+│       ├── POST   /       Create reply to post
+│       └── :replyId/reaction Toggle reply reaction
+└── admin/
+    ├── reports/  GET      Get moderation queue
+    ├── posts/:id/moderation PATCH Moderate post
+    ├── posts/:id/feature    PATCH Feature post
+    └── replies/:replyId/moderation PATCH Moderate reply
+```
+
+### Authentication & Authorization
+
+- **`stream:read` / `feed:read`**: Required for GET routes.
+- **`stream:create`**: Required for creating posts.
+- **`stream:reply` / `post:interact`**: Required for engagement actions (replies, reactions, bookmarks).
+- **`stream:moderate`**: Required for admin/moderation routes.
+
+---
+
+## Summary
+
+This comprehensive API design enables seamless communication and social interaction across the AbleGod platform while maintaining security, scalability, and high performance.
