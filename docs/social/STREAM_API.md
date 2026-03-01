@@ -1,5 +1,8 @@
 # Stream API Documentation
 
+> [!WARNING]
+> **STALE**: This document is incomplete. It is missing 50% of current endpoints (follows, engagement, moderation audit). Refer to the consolidated **Stream Architecture Audit** (available in the `ablegod-spark` repo or our knowledge base) for ground truth.
+
 The AbleGod Stream system provides a social-spiritual engagement platform where users can share reflections, engage via reactions, and curate content.
 
 ## Base Path: `/api/stream/*`

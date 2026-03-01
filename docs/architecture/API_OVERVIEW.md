@@ -1,5 +1,8 @@
 # Backend API Routes Overview
 
+> [!IMPORTANT]
+> **INCOMPLETE**: The Stream section of this document is a summary only. For the full Stream API map and capability requirements, refer to the consolidated **Stream Architecture Audit**.
+
 ## Chat System Routes (`/api/chat/*`)
 
 The AbleGod chat system provides comprehensive messaging capabilities with support for both encrypted end-to-end communication and unrestricted plain messaging.
