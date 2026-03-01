@@ -27,6 +27,7 @@ A comprehensive Node.js backend API for the AbleGod blog platform with real-time
 - [Frontend Integration Guide](#frontend-integration-guide)
 - [Security Notes](#security-notes)
 - [Contributing](#contributing)
+- [Architecture & Guidelines](docs/architecture/ARCHITECTURE_GUIDELINES.md)
 
 ## 🛠 Installation
 

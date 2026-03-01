@@ -22,11 +22,27 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
             const before = req.query.before ? String(req.query.before) : null; // cursor
 
             const query = status === "all" ? {} : { status };
+            // search parameters
+            const q = req.query.q ? String(req.query.q).trim() : null;
+            const tag = req.query.tag ? String(req.query.tag).trim().toLowerCase() : null;
+            if (q) {
+                query.$text = { $search: q };
+            }
+            if (tag) {
+                query["metadata.tags"] = tag;
+            }
             if (before) {
                 query.created_at = { $lt: before };
             }
             const candidateLimit = feed === "explore" ? Math.min(limit * 3, 200) : limit;
-            let posts = await StreamPost.find(query).sort({ created_at: -1 }).limit(candidateLimit);
+            let posts;
+            if (query.$text) {
+                posts = await StreamPost.find(query, { score: { $meta: "textScore" } })
+                    .sort({ score: { $meta: "textScore" }, created_at: -1 })
+                    .limit(candidateLimit);
+            } else {
+                posts = await StreamPost.find(query).sort({ created_at: -1 }).limit(candidateLimit);
+            }
             const authUserId = req.auth?.user?.id;
             const feedContext = {};
             if (feed === "following") {
@@ -85,6 +101,38 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
         } catch (error) {
             console.error("Error listing stream posts:", error);
             return res.status(500).json({ success: false, message: "Failed to fetch stream posts" });
+        }
+    });
+
+    // ─── GET /posts/tags/trending — simple trending tags computation ───
+    router.get("/posts/tags/trending", ...requireFeedRead, async (req, res) => {
+        try {
+            const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+            const tagsAgg = await StreamPost.aggregate([
+                { $match: { status: "published", created_at: { $gte: since }, "metadata.tags": { $exists: true, $ne: [] } } },
+                { $unwind: "$metadata.tags" },
+                { $group: { _id: { $toLower: "$metadata.tags" }, count: { $sum: 1 } } },
+                { $sort: { count: -1 } },
+                { $limit: 20 }
+            ]);
+            let tags = tagsAgg.map((t) => t._id);
+            // optionally vet tags with AI moderation (fail-open)
+            if (AIService && AIService.moderateContent) {
+                const vetted = [];
+                for (const tag of tags) {
+                    try {
+                        const mod = await AIService.moderateContent(tag, {});
+                        if (mod.is_worthy) vetted.push(tag);
+                    } catch (e) {
+                        vetted.push(tag);
+                    }
+                }
+                tags = vetted;
+            }
+            return res.json({ success: true, tags });
+        } catch (err) {
+            console.error("Trending tags error", err);
+            return res.status(500).json({ success: false, message: "Failed to compute trending tags" });
         }
     });
 

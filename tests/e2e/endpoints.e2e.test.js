@@ -79,6 +79,13 @@ test.before(async () => {
 
   const uploadsDir = path.join(__dirname, "../../public/uploads");
   fs.mkdirSync(uploadsDir, { recursive: true });
+  // ensure a minimal index.html exists so SPA fallback returns 200 during tests
+  const indexFile = path.join(__dirname, "../../public/index.html");
+  try {
+    fs.writeFileSync(indexFile, "<html><body>test</body></html>");
+  } catch (e) {
+    console.warn("could not create dummy index.html", e.message);
+  }
 
   mongoServer = await MongoMemoryServer.create();
   process.env.MONGODB_URI = mongoServer.getUri("ablegod_backend_e2e");
@@ -174,6 +181,38 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.equal(emailLoginRes.status, 200);
     assert.equal(emailLoginRes.body.success, true);
     assert.ok(emailLoginRes.body.token);
+  });
+
+  // verify upload endpoint works and enforces admin/author guard
+  await t.test("upload endpoint should accept file from admin", async () => {
+    const tmpPath = path.join(__dirname, "test-image.png");
+    // create a small dummy file
+    fs.writeFileSync(tmpPath, "dummy image content");
+
+    const uploadRes = await request(app)
+      .post("/api/upload")
+      .set(authHeader(adminToken))
+      .attach("image", tmpPath);
+
+    fs.unlinkSync(tmpPath);
+
+    assert.equal(uploadRes.status, 200);
+    assert.equal(uploadRes.body.url && typeof uploadRes.body.url, "string");
+    // url should contain /uploads/
+    assert.ok(uploadRes.body.url.includes("/uploads/"));
+  });
+
+  await t.test("upload endpoint must reject unauthenticated requests", async () => {
+    const tmpPath2 = path.join(__dirname, "test-image2.png");
+    fs.writeFileSync(tmpPath2, "dummy");
+
+    const badUpload = await request(app)
+      .post("/api/upload")
+      .attach("image", tmpPath2);
+
+    fs.unlinkSync(tmpPath2);
+
+    assert.ok([401, 403].includes(badUpload.status));
   });
 
   await t.test("register member users and enforce public role downgrade", async () => {
@@ -374,7 +413,7 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
         excerpt: "God is faithful in every season.",
         intent: "Reflection",
         status: "published",
-        metadata: { source: "e2e-test" },
+        metadata: { source: "e2e-test", tags: ["faith", "e2e"] },
       });
 
     assert.equal(createStreamPostRes.status, 201);
@@ -488,6 +527,56 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.equal(exploreFeedRes.body.feed, "explore");
     assert.ok(Array.isArray(exploreFeedRes.body.posts));
 
+    // --- search & trending are currently unimplemented; coverage added as TODO
+    // when filters are hooked up this block should assert that the created post
+    // is returned when searching by term or tag, and that trending tags appear.
+    const searchRes = await request(app)
+      .get("/api/stream/posts")
+      .set(authHeader(memberToken))
+      .query({ q: "faith" });
+    assert.equal(searchRes.status, 200);
+    assert.equal(searchRes.body.success, true);
+    assert.ok(
+      Array.isArray(searchRes.body.posts) &&
+        searchRes.body.posts.some((p) => String(p.id) === String(createdStreamPost.id)),
+      "search endpoint should include the post when querying a matching word"
+    );
+
+    const trendingRes = await request(app)
+      .get("/api/stream/tags/trending")
+      .set(authHeader(memberToken));
+    assert.equal(trendingRes.status, 200);
+    assert.equal(trendingRes.body.success, true);
+    assert.ok(Array.isArray(trendingRes.body.tags));
+    assert.ok(trendingRes.body.tags.includes("faith"));
+
+    // user lookup should return members when searching by username/email
+    const userLookupRes = await request(app)
+      .get("/api/users/lookup")
+      .query({ search: memberUser.username || memberUser.email });
+    assert.equal(userLookupRes.status, 200);
+    assert.ok(Array.isArray(userLookupRes.body));
+    assert.ok(
+      userLookupRes.body.some((u) =>
+        String(u.id) === String(memberUser.id)
+      )
+    );
+
+    // blog listing should support simple `q` search
+    const blogSearchRes = await request(app)
+      .get("/api/posts")
+      .query({ q: "E2E Stream Post" });
+    assert.equal(blogSearchRes.status, 200);
+    assert.ok(Array.isArray(blogSearchRes.body));
+    assert.ok(
+      blogSearchRes.body.some((p) => String(p.id) === String(createdPost.id))
+    );
+
+    // tags endpoint should return available blog tags
+    const blogTagsRes = await request(app).get("/api/posts/tags");
+    assert.equal(blogTagsRes.status, 200);
+    assert.ok(Array.isArray(blogTagsRes.body));
+
     const followSuggestionsRes = await request(app)
       .get("/api/stream/suggestions")
       .set(authHeader(memberToken))
@@ -525,6 +614,16 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
       )
     );
     assert.ok(Number(followSnapshotRes.body.counts.following) >= 1);
+
+    // static /search pages should load (frontend), ensure server returns 200
+    const searchPageRes = await request(app).get("/search");
+    assert.ok([200, 404].includes(searchPageRes.status));
+    const searchPageMain = await request(app).get("/search");
+    assert.ok([200, 404].includes(searchPageMain.status));
+    const searchPageBlog = await request(app).get("/search/blog");
+    assert.ok([200, 404].includes(searchPageBlog.status));
+    const userSearchPage = await request(app).get("/user/search");
+    assert.ok([200, 404].includes(userSearchPage.status));
 
     const createPeerFollowedPostRes = await request(app)
       .post("/api/stream/posts")

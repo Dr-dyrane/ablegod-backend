@@ -24,7 +24,19 @@ const isStreamPostPayload = (payload = {}) => {
 // Routes
 router.get("/", async (req, res) => {
 	try {
-		const posts = await BlogPost.find();
+		// allow simple keyword search via `q` query param
+		const q = req.query.q ? String(req.query.q).trim() : null;
+		let filter = {};
+		if (q) {
+			filter = {
+				$or: [
+					{ title: { $regex: q, $options: "i" } },
+					{ content: { $regex: q, $options: "i" } },
+					{ excerpt: { $regex: q, $options: "i" } },
+				],
+			};
+		}
+		const posts = await BlogPost.find(filter);
 		res.json(posts);
 	} catch (error) {
 		console.error("Error fetching posts:", error);

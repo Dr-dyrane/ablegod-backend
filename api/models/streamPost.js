@@ -38,4 +38,7 @@ const streamPostSchema = new mongoose.Schema(
 	{ minimize: true }
 );
 
+// text index for full‑text search on title/content (Phase‑4 residual work)
+streamPostSchema.index({ title: "text", content: "text" });
+
 module.exports = mongoose.model("StreamPost", streamPostSchema);

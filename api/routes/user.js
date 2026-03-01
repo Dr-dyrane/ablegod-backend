@@ -60,7 +60,7 @@ router.get("/:id/profile", ...requireSelfOrAdmin("id"), async (req, res) => {
 		res.json({ profile: user, ...activity });
 	} catch (error) {
 		console.error("Error fetching user profile:", error);
-		res.status(500).json({ error: "Error fetching user profile", details: error.message });
+		res.status(500).json({ error: "Error fetching user profile", details: error.message }); // see Architecture Guidelines for envelope format
 	}
 });
 

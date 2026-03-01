@@ -56,7 +56,7 @@ req.auth.user = {
 
 - Accepts `multipart/form-data` with a single file field named `image` (current implementation handles any file type, video support considered). 
 - Stores file on local disk under `public/uploads` (or `/tmp` on Vercel) and returns a public URL. 
-- Guarded by `requireAdminOrAuthor` middleware today to limit abuse; frontend `blogService.uploadImage` and `stream` flows use it.  Future plans include connecting this endpoint to alternate storage (Postgres blob store, video pipeline, CDN proxy).
+- Guarded by `requireCapabilities("stream:create")` middleware so any user who may create a stream post can also upload media.  (Previously limited to admins/authors; guard was loosened to support ordinary members.) Future plans include connecting this endpoint to alternate storage (Postgres blob store, video pipeline, CDN proxy).
 - Response: `{ url: "https://<host>/uploads/<uuid>.<ext>" }`
 
 > **Client note**: most new media flows (user avatars, stream images) still upload directly to Cloudinary via signed presets. `/api/upload` exists as a lightweight bridge when server-side processing or non-Cloudinary storage is required, and chat attachment support is planned to reuse this pipeline.
@@ -87,6 +87,17 @@ req.auth.user = {
 - `q` - Search term (username, name, email)
 - `limit` - Max results (default: 10)
 **Response**: Array of user objects with `has_identity_key` flag
+
+### Stream Search & Trending
+
+#### `GET /api/stream/posts` (extended)
+**Purpose**: Existing feed endpoint will accept additional query parameters to support keyword and tag search. Clients should be able to pass `q` (full‑text search) or `tag` (single tag) to filter results. Backend should index `metadata.tags` array and `content` field to provide fast lookups.
+
+- **Auth**: `stream:read`
+- **Future plan**: expose `/api/stream/tags/trending` returning an ordered list of hot tags/topics. Compute periodically from recent posts, with simple decay weighting (freshness + engagement). AI moderation service should vet trends to ensure spiritual context and remove offensive terms.
+
+> _Note_: hashtags are already stored in `metadata.tags` on the post model; this section reminds developers to implement search/trend logic as part of the social core feature set.
+
 
 ### 3. Conversation Management
 
