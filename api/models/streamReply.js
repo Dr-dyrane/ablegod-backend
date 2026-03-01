@@ -7,6 +7,8 @@ const streamReplySchema = new mongoose.Schema(
 		parent_reply_id: { type: String, default: null, index: true },
 		author_user_id: { type: String, index: true },
 		author_name: String,
+		author_username: String,
+		author_avatar_url: String,
 		author_role: String,
 		content: String,
 		status: { type: String, default: "published" },

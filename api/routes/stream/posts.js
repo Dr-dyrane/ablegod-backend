@@ -126,10 +126,14 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
             }
 
             const now = new Date().toISOString();
+            // Look up user record for persistent author fields
+            const userRecord = await User.findOne({ id: authUser.id });
             const post = new StreamPost({
                 id: uuidv4(),
                 author_user_id: String(authUser.id),
                 author_name: getAuthDisplayName(authUser, "User"),
+                author_username: String(userRecord?.username || authUser.username || authUser.email?.split("@")[0] || ""),
+                author_avatar_url: String(userRecord?.avatar_url || userRecord?.avatarUrl || authUser.avatar_url || ""),
                 author_role: String(authUser.role || "user"),
                 intent: String(intent || "Reflection"),
                 title: String(title || "").trim(),

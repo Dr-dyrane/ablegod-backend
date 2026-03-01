@@ -5,6 +5,8 @@ const streamPostSchema = new mongoose.Schema(
 		id: { type: String, index: true, unique: true },
 		author_user_id: { type: String, index: true },
 		author_name: String,
+		author_username: String,
+		author_avatar_url: String,
 		author_role: String,
 		intent: String, // Reflection, Prayer, Testimony, Question, Encouragement
 		title: String,

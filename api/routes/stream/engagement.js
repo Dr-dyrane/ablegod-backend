@@ -3,11 +3,39 @@ const {
     StreamPost, StreamReply, StreamBookmark, StreamRestream,
 } = require("./_helpers");
 
+// ─── Simple in-memory rate limiter (per-user, per-minute) ───
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 30;
+const rateBuckets = new Map();
+
+// Cleanup stale buckets every 5 minutes
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, bucket] of rateBuckets) {
+        if (now - bucket.windowStart > RATE_LIMIT_WINDOW_MS * 2) rateBuckets.delete(key);
+    }
+}, 5 * 60_000);
+
+const checkEngagementRate = (req, res, next) => {
+    const userId = String(req.auth?.user?.id || "anon");
+    const now = Date.now();
+    let bucket = rateBuckets.get(userId);
+    if (!bucket || now - bucket.windowStart > RATE_LIMIT_WINDOW_MS) {
+        bucket = { windowStart: now, count: 0 };
+        rateBuckets.set(userId, bucket);
+    }
+    bucket.count += 1;
+    if (bucket.count > RATE_LIMIT_MAX) {
+        return res.status(429).json({ success: false, message: "Too many actions. Please slow down." });
+    }
+    next();
+};
+
 function mountEngagementRoutes(router, { requirePostInteract, requireFeedRead }) {
 
     // ─── Post-level engagement ───
 
-    router.post("/posts/:id/bookmark", ...requirePostInteract, async (req, res) => {
+    router.post("/posts/:id/bookmark", checkEngagementRate, ...requirePostInteract, async (req, res) => {
         try {
             const authUser = req.auth.user;
             const postId = String(req.params.id || "");
@@ -32,7 +60,7 @@ function mountEngagementRoutes(router, { requirePostInteract, requireFeedRead })
         }
     });
 
-    router.post("/posts/:id/restream", ...requirePostInteract, async (req, res) => {
+    router.post("/posts/:id/restream", checkEngagementRate, ...requirePostInteract, async (req, res) => {
         try {
             const authUser = req.auth.user;
             const postId = String(req.params.id || "");
@@ -57,7 +85,7 @@ function mountEngagementRoutes(router, { requirePostInteract, requireFeedRead })
         }
     });
 
-    router.post("/posts/:id/share", ...requirePostInteract, async (req, res) => {
+    router.post("/posts/:id/share", checkEngagementRate, ...requirePostInteract, async (req, res) => {
         try {
             const postId = String(req.params.id || "");
             const post = await StreamPost.findOne({ id: postId });
@@ -86,7 +114,7 @@ function mountEngagementRoutes(router, { requirePostInteract, requireFeedRead })
 
     // ─── Reply-level engagement ───
 
-    router.post("/posts/:postId/replies/:replyId/bookmark", ...requirePostInteract, async (req, res) => {
+    router.post("/posts/:postId/replies/:replyId/bookmark", checkEngagementRate, ...requirePostInteract, async (req, res) => {
         try {
             const authUser = req.auth.user;
             const { postId, replyId } = req.params;
@@ -111,7 +139,7 @@ function mountEngagementRoutes(router, { requirePostInteract, requireFeedRead })
         }
     });
 
-    router.post("/posts/:postId/replies/:replyId/restream", ...requirePostInteract, async (req, res) => {
+    router.post("/posts/:postId/replies/:replyId/restream", checkEngagementRate, ...requirePostInteract, async (req, res) => {
         try {
             const authUser = req.auth.user;
             const { postId, replyId } = req.params;
@@ -136,7 +164,7 @@ function mountEngagementRoutes(router, { requirePostInteract, requireFeedRead })
         }
     });
 
-    router.post("/posts/:postId/replies/:replyId/share", ...requirePostInteract, async (req, res) => {
+    router.post("/posts/:postId/replies/:replyId/share", checkEngagementRate, ...requirePostInteract, async (req, res) => {
         try {
             const { postId, replyId } = req.params;
             const reply = await StreamReply.findOne({ id: replyId, post_id: postId });

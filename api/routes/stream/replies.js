@@ -1,7 +1,7 @@
 const { v4: uuidv4 } = require("uuid");
 const {
     StreamPost, StreamReply, StreamReaction, StreamBookmark, StreamRestream, StreamReport,
-    Notification,
+    Notification, User,
     serializePost, serializeReply,
     buildViewerReactionMap, getAuthDisplayName,
 } = require("./_helpers");
@@ -50,11 +50,14 @@ function mountReplyRoutes(router, { requireFeedRead, requirePostInteract, emitNo
             if (!post) return res.status(404).json({ success: false, message: "Stream post not found" });
 
             const now = new Date().toISOString();
+            const userRecord = await User.findOne({ id: authUser.id });
             const reply = new StreamReply({
                 id: uuidv4(), post_id: postId,
                 parent_reply_id: parent_reply_id ? String(parent_reply_id) : null,
                 author_user_id: String(authUser.id),
                 author_name: getAuthDisplayName(authUser, "User"),
+                author_username: String(userRecord?.username || authUser.username || authUser.email?.split("@")[0] || ""),
+                author_avatar_url: String(userRecord?.avatar_url || userRecord?.avatarUrl || authUser.avatar_url || ""),
                 author_role: String(authUser.role || "user"),
                 content: normalizedContent, status: "published", metadata,
                 created_at: now, updated_at: now,
