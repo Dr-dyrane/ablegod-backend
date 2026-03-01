@@ -4,6 +4,10 @@
 
 The AbleGod backend provides a comprehensive chat system with support for both encrypted end-to-end messaging and unrestricted plain messaging. The system is designed to handle seamless communication between all users without artificial constraints.
 
+> **Attachment strategy**
+> While chat messages themselves are text/ciphertext, file attachments (images, videos, etc.) are currently uploaded directly to Cloudinary by the frontend. A server-side upload endpoint (`POST /api/upload`) exists and is used by other features (blog posts, stream composer) and will be wired into chat flows once a shared validation and storage pipeline is finalized.
+
+
 ## Authentication
 
 All chat endpoints require authentication with the following capabilities:

@@ -49,6 +49,18 @@ req.auth.user = {
 
 ## Core Endpoints
 
+### Media Upload Utility
+
+#### `POST /api/upload`
+**Purpose**: Generic file upload service used by blog/stream composer and later chat attachments.
+
+- Accepts `multipart/form-data` with a single file field named `image` (current implementation handles any file type, video support considered). 
+- Stores file on local disk under `public/uploads` (or `/tmp` on Vercel) and returns a public URL. 
+- Guarded by `requireAdminOrAuthor` middleware today to limit abuse; frontend `blogService.uploadImage` and `stream` flows use it.  Future plans include connecting this endpoint to alternate storage (Postgres blob store, video pipeline, CDN proxy).
+- Response: `{ url: "https://<host>/uploads/<uuid>.<ext>" }`
+
+> **Client note**: most new media flows (user avatars, stream images) still upload directly to Cloudinary via signed presets. `/api/upload` exists as a lightweight bridge when server-side processing or non-Cloudinary storage is required, and chat attachment support is planned to reuse this pipeline.
+
 ### 1. Identity Key Management
 
 #### `GET /api/chat/identity-keys`
