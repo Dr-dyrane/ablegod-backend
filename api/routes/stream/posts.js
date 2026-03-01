@@ -3,11 +3,11 @@ const { v4: uuidv4 } = require("uuid");
 const { requireCapabilities } = require("../../middleware/auth");
 const AIService = require("../../services/aiService");
 const {
-    StreamPost, User,
+    StreamPost, StreamReply, StreamReaction, StreamBookmark, StreamRestream, StreamReport, User,
     serializePost,
     buildViewerReactionMap, buildViewerBookmarkSet, buildViewerRestreamSet,
     getFollowSetForUser, sortPostsForFeed,
-    StreamBookmark, getAuthDisplayName,
+    getAuthDisplayName,
 } = require("./_helpers");
 
 function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePostUpdate }) {
@@ -209,6 +209,40 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
         } catch (error) {
             console.error("Error fetching stream post:", error);
             return res.status(500).json({ success: false, message: "Failed to fetch stream post" });
+        }
+    });
+
+    // ─── DELETE /posts/:id — Remove post (author or admin) ───
+    router.delete("/posts/:id", ...requirePostUpdate, async (req, res) => {
+        try {
+            const authUser = req.auth.user;
+            const postId = String(req.params.id || "");
+            const post = await StreamPost.findOne({ id: postId });
+            if (!post) return res.status(404).json({ success: false, message: "Post not found" });
+            if (String(post.author_user_id) !== String(authUser.id) && authUser.role !== "admin") {
+                return res.status(403).json({ success: false, message: "Unauthorized to delete this post" });
+            }
+
+            // Cascading cleanup
+            const replyIds = (await StreamReply.find({ post_id: postId }, { id: 1 })).map(r => r.id);
+            await Promise.all([
+                StreamReply.deleteMany({ post_id: postId }),
+                StreamReaction.deleteMany({ post_id: postId }),
+                StreamBookmark.deleteMany({ post_id: postId }),
+                StreamRestream.deleteMany({ post_id: postId }),
+                StreamReport.deleteMany({ post_id: postId }),
+            ]);
+            await post.deleteOne();
+
+            return res.json({
+                success: true,
+                message: "Post removed",
+                deleted_post_id: postId,
+                deleted_reply_count: replyIds.length,
+            });
+        } catch (error) {
+            console.error("Error deleting stream post:", error);
+            return res.status(500).json({ success: false, message: "Failed to delete post" });
         }
     });
 }

@@ -1,6 +1,7 @@
 const { v4: uuidv4 } = require("uuid");
 const {
-    StreamPost, StreamReply, Notification,
+    StreamPost, StreamReply, StreamReaction, StreamBookmark, StreamRestream, StreamReport,
+    Notification,
     serializePost, serializeReply,
     buildViewerReactionMap, getAuthDisplayName,
 } = require("./_helpers");
@@ -110,6 +111,51 @@ function mountReplyRoutes(router, { requireFeedRead, requirePostInteract, emitNo
         } catch (error) {
             console.error("Error editing stream reply:", error);
             return res.status(500).json({ success: false, message: "Failed to edit reply" });
+        }
+    });
+
+    // ─── DELETE /posts/:postId/replies/:replyId — Remove reply (author or admin) ───
+    router.delete("/posts/:postId/replies/:replyId", ...requirePostInteract, async (req, res) => {
+        try {
+            const authUser = req.auth.user;
+            const { postId, replyId } = req.params;
+            const reply = await StreamReply.findOne({ id: replyId, post_id: postId });
+            if (!reply) return res.status(404).json({ success: false, message: "Reply not found" });
+            if (String(reply.author_user_id) !== String(authUser.id) && authUser.role !== "admin") {
+                return res.status(403).json({ success: false, message: "Unauthorized to delete this reply" });
+            }
+
+            // Delete child replies (nested threads) and associated data
+            const childReplyIds = (await StreamReply.find({ parent_reply_id: replyId }, { id: 1 })).map(r => r.id);
+            const allReplyIds = [replyId, ...childReplyIds];
+            await Promise.all([
+                StreamReply.deleteMany({ id: { $in: childReplyIds } }),
+                StreamReaction.deleteMany({ target_type: "reply", target_id: { $in: allReplyIds } }),
+                StreamBookmark.deleteMany({ reply_id: { $in: allReplyIds } }),
+                StreamRestream.deleteMany({ reply_id: { $in: allReplyIds } }),
+                StreamReport.deleteMany({ target_type: "reply", target_id: { $in: allReplyIds } }),
+            ]);
+            await reply.deleteOne();
+
+            // Update parent post reply count
+            const post = await StreamPost.findOne({ id: postId });
+            if (post) {
+                const remainingCount = await StreamReply.countDocuments({ post_id: postId, status: "published" });
+                post.reply_count = Math.max(0, remainingCount);
+                post.updated_at = new Date().toISOString();
+                await post.save();
+            }
+
+            return res.json({
+                success: true,
+                message: "Reply removed",
+                deleted_reply_id: replyId,
+                deleted_child_count: childReplyIds.length,
+                updated_reply_count: post?.reply_count ?? 0,
+            });
+        } catch (error) {
+            console.error("Error deleting stream reply:", error);
+            return res.status(500).json({ success: false, message: "Failed to delete reply" });
         }
     });
 }
