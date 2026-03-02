@@ -1,10 +1,29 @@
 const { v4: uuidv4 } = require("uuid");
 const {
     StreamPost, StreamReply, StreamReaction, StreamBookmark, StreamRestream, StreamReport,
+    StreamCircle, StreamCircleMember,
     Notification, User,
     serializePost, serializeReply,
     buildViewerReactionMap, getAuthDisplayName,
 } = require("./_helpers");
+
+async function getActiveCircleMembership(circleId, userId) {
+    const normalizedCircleId = String(circleId || "");
+    const normalizedUserId = String(userId || "");
+    if (!normalizedCircleId || !normalizedUserId) return null;
+    return StreamCircleMember.findOne({
+        circle_id: normalizedCircleId,
+        user_id: normalizedUserId,
+        status: "active",
+    });
+}
+
+function canAccessCircle(circle, membership, authUser) {
+    if (!circle) return false;
+    if (String(authUser?.role || "").toLowerCase() === "admin") return true;
+    if (String(circle.visibility || "public") === "public") return true;
+    return Boolean(membership);
+}
 
 function mountReplyRoutes(router, { requireFeedRead, requirePostInteract, emitNotificationEvent }) {
 
@@ -14,6 +33,17 @@ function mountReplyRoutes(router, { requireFeedRead, requirePostInteract, emitNo
             const postId = String(req.params.id || "");
             const post = await StreamPost.findOne({ id: postId });
             if (!post) return res.status(404).json({ success: false, message: "Stream post not found" });
+            const postCircleId = String(post?.metadata?.circle_id || "");
+            if (postCircleId) {
+                const circle = await StreamCircle.findOne({ id: postCircleId });
+                const membership = await getActiveCircleMembership(postCircleId, req.auth?.user?.id);
+                if (!circle || !canAccessCircle(circle, membership, req.auth?.user)) {
+                    return res.status(403).json({
+                        success: false,
+                        message: "You do not have access to replies for this post",
+                    });
+                }
+            }
 
             const replies = await StreamReply.find({ post_id: postId, status: "published" }).sort({ created_at: 1 });
             const viewerReplyReactionMap = await buildViewerReactionMap({
@@ -48,6 +78,17 @@ function mountReplyRoutes(router, { requireFeedRead, requirePostInteract, emitNo
 
             const post = await StreamPost.findOne({ id: postId });
             if (!post) return res.status(404).json({ success: false, message: "Stream post not found" });
+            const postCircleId = String(post?.metadata?.circle_id || "");
+            if (postCircleId) {
+                const circle = await StreamCircle.findOne({ id: postCircleId });
+                const membership = await getActiveCircleMembership(postCircleId, authUser.id);
+                if (!circle || !canAccessCircle(circle, membership, authUser)) {
+                    return res.status(403).json({
+                        success: false,
+                        message: "Join the circle before replying to this post",
+                    });
+                }
+            }
 
             const now = new Date().toISOString();
             const userRecord = await User.findOne({ id: authUser.id });
@@ -100,6 +141,20 @@ function mountReplyRoutes(router, { requireFeedRead, requirePostInteract, emitNo
 
             const reply = await StreamReply.findOne({ id: replyId, post_id: postId });
             if (!reply) return res.status(404).json({ success: false, message: "Reply not found" });
+            const post = await StreamPost.findOne({ id: String(postId || "") });
+            if (post) {
+                const postCircleId = String(post?.metadata?.circle_id || "");
+                if (postCircleId) {
+                    const circle = await StreamCircle.findOne({ id: postCircleId });
+                    const membership = await getActiveCircleMembership(postCircleId, authUser.id);
+                    if (!circle || !canAccessCircle(circle, membership, authUser)) {
+                        return res.status(403).json({
+                            success: false,
+                            message: "You do not have access to edit replies in this circle",
+                        });
+                    }
+                }
+            }
             if (String(reply.author_user_id) !== String(authUser.id) && authUser.role !== "admin") {
                 return res.status(403).json({ success: false, message: "Unauthorized to edit this reply" });
             }
@@ -124,6 +179,20 @@ function mountReplyRoutes(router, { requireFeedRead, requirePostInteract, emitNo
             const { postId, replyId } = req.params;
             const reply = await StreamReply.findOne({ id: replyId, post_id: postId });
             if (!reply) return res.status(404).json({ success: false, message: "Reply not found" });
+            const post = await StreamPost.findOne({ id: String(postId || "") });
+            if (post) {
+                const postCircleId = String(post?.metadata?.circle_id || "");
+                if (postCircleId) {
+                    const circle = await StreamCircle.findOne({ id: postCircleId });
+                    const membership = await getActiveCircleMembership(postCircleId, authUser.id);
+                    if (!circle || !canAccessCircle(circle, membership, authUser)) {
+                        return res.status(403).json({
+                            success: false,
+                            message: "You do not have access to delete replies in this circle",
+                        });
+                    }
+                }
+            }
             if (String(reply.author_user_id) !== String(authUser.id) && authUser.role !== "admin") {
                 return res.status(403).json({ success: false, message: "Unauthorized to delete this reply" });
             }
@@ -141,7 +210,6 @@ function mountReplyRoutes(router, { requireFeedRead, requirePostInteract, emitNo
             await reply.deleteOne();
 
             // Update parent post reply count
-            const post = await StreamPost.findOne({ id: postId });
             if (post) {
                 const remainingCount = await StreamReply.countDocuments({ post_id: postId, status: "published" });
                 post.reply_count = Math.max(0, remainingCount);

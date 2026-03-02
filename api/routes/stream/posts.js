@@ -3,12 +3,40 @@ const { v4: uuidv4 } = require("uuid");
 const { requireCapabilities } = require("../../middleware/auth");
 const AIService = require("../../services/aiService");
 const {
-    StreamPost, StreamReply, StreamReaction, StreamBookmark, StreamRestream, StreamReport, User,
+    StreamPost, StreamReply, StreamReaction, StreamBookmark, StreamRestream, StreamReport,
+    StreamCircle, StreamCircleMember,
+    User,
     serializePost,
     buildViewerReactionMap, buildViewerBookmarkSet, buildViewerRestreamSet,
     getFollowSetForUser, sortPostsForFeed,
     getAuthDisplayName,
 } = require("./_helpers");
+
+async function resolveCircleByIdentifier(identifier) {
+    const normalized = String(identifier || "").trim();
+    if (!normalized) return null;
+    return StreamCircle.findOne({
+        $or: [{ id: normalized }, { slug: normalized }],
+    });
+}
+
+async function getActiveCircleMembership(circleId, userId) {
+    const normalizedCircleId = String(circleId || "");
+    const normalizedUserId = String(userId || "");
+    if (!normalizedCircleId || !normalizedUserId) return null;
+    return StreamCircleMember.findOne({
+        circle_id: normalizedCircleId,
+        user_id: normalizedUserId,
+        status: "active",
+    });
+}
+
+function canAccessCircle(circle, membership, authUser) {
+    if (!circle) return false;
+    if (String(authUser?.role || "").toLowerCase() === "admin") return true;
+    if (String(circle.visibility || "public") === "public") return true;
+    return Boolean(membership);
+}
 
 function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePostUpdate }) {
 
@@ -20,8 +48,13 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
             const status = String(req.query.status || "published");
             const feed = String(req.query.feed || "following").toLowerCase();
             const before = req.query.before ? String(req.query.before) : null; // cursor
+            const circleIdentifier = String(req.query.circle_id || req.query.circleId || "").trim();
+            const authUser = req.auth?.user;
+            const authUserId = authUser?.id;
+            const isAdmin = String(authUser?.role || "").toLowerCase() === "admin";
 
             const query = status === "all" ? {} : { status };
+            const feedContext = {};
             // search parameters
             const q = req.query.q ? String(req.query.q).trim() : null;
             const tag = req.query.tag ? String(req.query.tag).trim().toLowerCase() : null;
@@ -34,6 +67,26 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
             if (before) {
                 query.created_at = { $lt: before };
             }
+
+            if (circleIdentifier) {
+                const circle = await resolveCircleByIdentifier(circleIdentifier);
+                if (!circle) {
+                    return res.status(404).json({ success: false, message: "Circle not found" });
+                }
+                const membership = await getActiveCircleMembership(circle.id, authUserId);
+                if (!canAccessCircle(circle, membership, authUser)) {
+                    return res.status(403).json({ success: false, message: "You do not have access to this circle" });
+                }
+                query["metadata.circle_id"] = String(circle.id);
+                feedContext.circle = {
+                    id: String(circle.id),
+                    slug: String(circle.slug || ""),
+                    name: String(circle.name || ""),
+                    visibility: String(circle.visibility || "public"),
+                    is_member: Boolean(membership),
+                };
+            }
+
             const candidateLimit = feed === "explore" ? Math.min(limit * 3, 200) : limit;
             let posts;
             if (query.$text) {
@@ -43,8 +96,43 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
             } else {
                 posts = await StreamPost.find(query).sort({ created_at: -1 }).limit(candidateLimit);
             }
-            const authUserId = req.auth?.user?.id;
-            const feedContext = {};
+
+            if (!circleIdentifier && posts.length > 0 && !isAdmin) {
+                const circleIds = Array.from(
+                    new Set(
+                        posts
+                            .map((post) => String(post?.metadata?.circle_id || ""))
+                            .filter(Boolean)
+                    )
+                );
+
+                if (circleIds.length > 0) {
+                    const [circles, memberships] = await Promise.all([
+                        StreamCircle.find({ id: { $in: circleIds } }),
+                        authUserId
+                            ? StreamCircleMember.find({
+                                circle_id: { $in: circleIds },
+                                user_id: String(authUserId),
+                                status: "active",
+                            })
+                            : [],
+                    ]);
+                    const circleMap = new Map(circles.map((circle) => [String(circle.id || ""), circle]));
+                    const membershipSet = new Set(
+                        memberships.map((membership) => String(membership.circle_id || ""))
+                    );
+
+                    posts = posts.filter((post) => {
+                        const circleId = String(post?.metadata?.circle_id || "");
+                        if (!circleId) return true;
+                        const circle = circleMap.get(circleId);
+                        if (!circle) return false;
+                        if (String(circle.visibility || "public") === "public") return true;
+                        return membershipSet.has(circleId);
+                    });
+                }
+            }
+
             if (feed === "following") {
                 const followingSet = await getFollowSetForUser(authUserId);
                 const allowedIds = new Set([String(authUserId || ""), ...followingSet]);
@@ -66,6 +154,41 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
                 posts = await StreamPost.find({ id: { $in: bookmarkPostIds }, ...statusQuery });
                 const postMap = new Map(posts.map(p => [String(p.id), p]));
                 posts = bookmarkPostIds.map(id => postMap.get(id)).filter(Boolean);
+            }
+
+            if (feed === "bookmarks" && !circleIdentifier && posts.length > 0 && !isAdmin) {
+                const circleIds = Array.from(
+                    new Set(
+                        posts
+                            .map((post) => String(post?.metadata?.circle_id || ""))
+                            .filter(Boolean)
+                    )
+                );
+                if (circleIds.length > 0) {
+                    const [circles, memberships] = await Promise.all([
+                        StreamCircle.find({ id: { $in: circleIds } }),
+                        authUserId
+                            ? StreamCircleMember.find({
+                                circle_id: { $in: circleIds },
+                                user_id: String(authUserId),
+                                status: "active",
+                            })
+                            : [],
+                    ]);
+                    const circleMap = new Map(circles.map((circle) => [String(circle.id || ""), circle]));
+                    const membershipSet = new Set(
+                        memberships.map((membership) => String(membership.circle_id || ""))
+                    );
+
+                    posts = posts.filter((post) => {
+                        const circleId = String(post?.metadata?.circle_id || "");
+                        if (!circleId) return true;
+                        const circle = circleMap.get(circleId);
+                        if (!circle) return false;
+                        if (String(circle.visibility || "public") === "public") return true;
+                        return membershipSet.has(circleId);
+                    });
+                }
             }
 
             const sortedPosts = feed === "bookmarks" ? posts.slice(0, limit) : sortPostsForFeed(posts, feed, authUserId).slice(0, limit);
@@ -147,6 +270,7 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
                 title = "", content = "", excerpt = "",
                 intent = "Reflection", image_url, imageUrl,
                 status = "published", metadata = {},
+                circle_id, circleId,
             } = req.body || {};
 
             const normalizedContent = String(content || "").trim();
@@ -177,6 +301,31 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
             }
 
             const now = new Date().toISOString();
+            const requestedCircleIdentifier = String(circle_id || circleId || "").trim();
+            const safeMetadata =
+                metadata && typeof metadata === "object" && !Array.isArray(metadata)
+                    ? { ...metadata }
+                    : {};
+            let targetCircle = null;
+            if (requestedCircleIdentifier) {
+                targetCircle = await resolveCircleByIdentifier(requestedCircleIdentifier);
+                if (!targetCircle) {
+                    return res.status(404).json({ success: false, message: "Circle not found" });
+                }
+                const membership = await getActiveCircleMembership(targetCircle.id, authUser.id);
+                const canPostInCircle =
+                    String(authUser?.role || "").toLowerCase() === "admin" || Boolean(membership);
+                if (!canPostInCircle) {
+                    return res.status(403).json({
+                        success: false,
+                        message: "Join this circle before posting to it",
+                    });
+                }
+                safeMetadata.circle_id = String(targetCircle.id);
+                safeMetadata.circle_slug = String(targetCircle.slug || "");
+                safeMetadata.circle_name = String(targetCircle.name || "");
+                safeMetadata.circle_visibility = String(targetCircle.visibility || "public");
+            }
             // Look up user record for persistent author fields
             const userRecord = await User.findOne({ id: authUser.id });
             const post = new StreamPost({
@@ -194,12 +343,20 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
                 status: String(status || "published"),
                 reply_count: 0,
                 like_count: 0,
-                metadata,
+                metadata: safeMetadata,
                 created_at: now,
                 updated_at: now,
             });
 
             await post.save();
+            if (targetCircle) {
+                const circlePostCount = await StreamPost.countDocuments({
+                    "metadata.circle_id": String(targetCircle.id),
+                });
+                targetCircle.post_count = Math.max(0, Number(circlePostCount || 0));
+                targetCircle.updated_at = now;
+                await targetCircle.save();
+            }
             return res.status(201).json({ success: true, post: serializePost(post) });
         } catch (error) {
             console.error("Error creating stream post:", error);
@@ -246,7 +403,19 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
         try {
             const post = await StreamPost.findOne({ id: String(req.params.id) });
             if (!post) return res.status(404).json({ success: false, message: "Stream post not found" });
-            const authUserId = req.auth?.user?.id;
+            const authUser = req.auth?.user;
+            const authUserId = authUser?.id;
+            const postCircleId = String(post?.metadata?.circle_id || "");
+            if (postCircleId) {
+                const circle = await StreamCircle.findOne({ id: postCircleId });
+                const membership = await getActiveCircleMembership(postCircleId, authUserId);
+                if (!circle || !canAccessCircle(circle, membership, authUser)) {
+                    return res.status(403).json({
+                        success: false,
+                        message: "You do not have access to this stream post",
+                    });
+                }
+            }
             const targetIds = [String(post.id)];
             const [viewerReactionMap, viewerBookmarkSet, viewerRestreamSet] = await Promise.all([
                 buildViewerReactionMap({ userId: authUserId, targetType: "post", targetIds }),
@@ -288,6 +457,19 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
                 StreamReport.deleteMany({ post_id: postId }),
             ]);
             await post.deleteOne();
+
+            const postCircleId = String(post?.metadata?.circle_id || "");
+            if (postCircleId) {
+                const circle = await StreamCircle.findOne({ id: postCircleId });
+                if (circle) {
+                    const remainingCirclePostCount = await StreamPost.countDocuments({
+                        "metadata.circle_id": postCircleId,
+                    });
+                    circle.post_count = Math.max(0, Number(remainingCirclePostCount || 0));
+                    circle.updated_at = new Date().toISOString();
+                    await circle.save();
+                }
+            }
 
             return res.json({
                 success: true,

@@ -24,6 +24,7 @@ let createdManagedUser;
 let createdPost;
 let createdStreamPost;
 let createdStreamReply;
+let createdStreamCircle;
 let createdNotification;
 let createdConversation;
 let createdMessage;
@@ -696,6 +697,98 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
       )
     );
     assert.ok(Number(followSnapshotRes.body.counts.following) >= 1);
+
+    const createCircleRes = await request(app)
+      .post("/api/stream/circles")
+      .set(authHeader(memberToken))
+      .send({
+        name: "Faith Builders E2E",
+        description: "Circle for daily encouragement and prayer",
+        visibility: "closed",
+      });
+    assert.equal(createCircleRes.status, 201);
+    assert.equal(createCircleRes.body.success, true);
+    createdStreamCircle = createCircleRes.body.circle;
+    assert.equal(String(createdStreamCircle.visibility), "closed");
+    assert.equal(String(createdStreamCircle.owner_user_id), String(memberUser.id));
+
+    const listCirclesRes = await request(app)
+      .get("/api/stream/circles")
+      .set(authHeader(memberToken))
+      .query({ limit: 20 });
+    assert.equal(listCirclesRes.status, 200);
+    assert.equal(listCirclesRes.body.success, true);
+    assert.ok(Array.isArray(listCirclesRes.body.circles));
+    assert.ok(
+      listCirclesRes.body.circles.some(
+        (circle) => String(circle.id) === String(createdStreamCircle.id)
+      )
+    );
+
+    const peerClosedCirclePostBlockedRes = await request(app)
+      .post("/api/stream/posts")
+      .set(authHeader(peerToken))
+      .send({
+        title: "Should fail before join",
+        content: "Attempting to post inside closed circle before joining.",
+        excerpt: "Attempting to post inside closed circle before joining.",
+        intent: "Reflection",
+        status: "published",
+        circle_id: String(createdStreamCircle.id),
+      });
+    assert.equal(peerClosedCirclePostBlockedRes.status, 403);
+
+    const peerJoinCircleRes = await request(app)
+      .post(`/api/stream/circles/${encodeURIComponent(String(createdStreamCircle.id))}/join`)
+      .set(authHeader(peerToken))
+      .send({});
+    assert.equal(peerJoinCircleRes.status, 200);
+    assert.equal(peerJoinCircleRes.body.success, true);
+    assert.equal(peerJoinCircleRes.body.joined, true);
+
+    const peerCirclePostRes = await request(app)
+      .post("/api/stream/posts")
+      .set(authHeader(peerToken))
+      .send({
+        title: "Peer Circle Reflection",
+        content: "Now posting from inside the closed circle after joining.",
+        excerpt: "Now posting from inside the closed circle after joining.",
+        intent: "Encouragement",
+        status: "published",
+        circle_id: String(createdStreamCircle.id),
+      });
+    assert.equal(peerCirclePostRes.status, 201);
+    assert.equal(peerCirclePostRes.body.success, true);
+    assert.equal(
+      String(peerCirclePostRes.body.post?.metadata?.circle_id || ""),
+      String(createdStreamCircle.id)
+    );
+
+    const circlePostsRes = await request(app)
+      .get(`/api/stream/circles/${encodeURIComponent(String(createdStreamCircle.id))}/posts`)
+      .set(authHeader(memberToken))
+      .query({ limit: 20 });
+    assert.equal(circlePostsRes.status, 200);
+    assert.equal(circlePostsRes.body.success, true);
+    assert.ok(Array.isArray(circlePostsRes.body.posts));
+    assert.ok(
+      circlePostsRes.body.posts.some(
+        (post) => String(post.metadata?.circle_id || "") === String(createdStreamCircle.id)
+      )
+    );
+
+    const adminCirclesRes = await request(app)
+      .get("/api/stream/admin/circles")
+      .set(authHeader(adminToken))
+      .query({ limit: 40 });
+    assert.equal(adminCirclesRes.status, 200);
+    assert.equal(adminCirclesRes.body.success, true);
+    assert.ok(
+      Array.isArray(adminCirclesRes.body.circles) &&
+        adminCirclesRes.body.circles.some(
+          (circle) => String(circle.id) === String(createdStreamCircle.id)
+        )
+    );
 
     // static /search pages should load (frontend), ensure server returns 200
     const searchPageRes = await request(app).get("/search");

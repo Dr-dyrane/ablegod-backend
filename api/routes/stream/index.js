@@ -67,6 +67,7 @@ function createStreamRoutes(pusher) {
     require("./engagement")(router, ctx);
     require("./shares")(router, ctx);
     require("./follows")(router, ctx);
+    require("./circles")(router, ctx);
     require("./admin")(router, ctx);
 
     return router;
