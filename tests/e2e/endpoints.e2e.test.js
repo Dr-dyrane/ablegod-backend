@@ -738,6 +738,42 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
       });
     assert.equal(peerClosedCirclePostBlockedRes.status, 403);
 
+    const invitePeerToCircleRes = await request(app)
+      .post(`/api/stream/circles/${encodeURIComponent(String(createdStreamCircle.id))}/invite`)
+      .set(authHeader(memberToken))
+      .send({
+        user_id: String(peerUser.id),
+        role: "moderator",
+      });
+    assert.equal(invitePeerToCircleRes.status, 201);
+    assert.equal(invitePeerToCircleRes.body.success, true);
+    assert.equal(String(invitePeerToCircleRes.body.member.user_id), String(peerUser.id));
+    assert.equal(String(invitePeerToCircleRes.body.member.role), "moderator");
+
+    const circleMembersAfterInviteRes = await request(app)
+      .get(`/api/stream/circles/${encodeURIComponent(String(createdStreamCircle.id))}/members`)
+      .set(authHeader(memberToken))
+      .query({ limit: 20 });
+    assert.equal(circleMembersAfterInviteRes.status, 200);
+    assert.equal(circleMembersAfterInviteRes.body.success, true);
+    const invitedPeerMember = circleMembersAfterInviteRes.body.members.find(
+      (member) => String(member.user_id) === String(peerUser.id)
+    );
+    assert.ok(invitedPeerMember);
+    assert.equal(String(invitedPeerMember.role), "moderator");
+
+    const peerNotificationsAfterInviteRes = await request(app)
+      .get("/api/notifications")
+      .set(authHeader(peerToken))
+      .query({ limit: 50 });
+    assert.equal(peerNotificationsAfterInviteRes.status, 200);
+    const streamCircleInviteNotification = peerNotificationsAfterInviteRes.body.notifications.find(
+      (notification) =>
+        notification?.metadata?.kind === "stream_circle_invite" &&
+        String(notification?.metadata?.stream_circle_id) === String(createdStreamCircle.id)
+    );
+    assert.ok(streamCircleInviteNotification);
+
     const peerJoinCircleRes = await request(app)
       .post(`/api/stream/circles/${encodeURIComponent(String(createdStreamCircle.id))}/join`)
       .set(authHeader(peerToken))
@@ -745,6 +781,50 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.equal(peerJoinCircleRes.status, 200);
     assert.equal(peerJoinCircleRes.body.success, true);
     assert.equal(peerJoinCircleRes.body.joined, true);
+
+    const demotePeerCircleRoleRes = await request(app)
+      .patch(
+        `/api/stream/circles/${encodeURIComponent(String(createdStreamCircle.id))}/members/${encodeURIComponent(
+          String(peerUser.id)
+        )}`
+      )
+      .set(authHeader(memberToken))
+      .send({ role: "member" });
+    assert.equal(demotePeerCircleRoleRes.status, 200);
+    assert.equal(demotePeerCircleRoleRes.body.success, true);
+    assert.equal(String(demotePeerCircleRoleRes.body.member.role), "member");
+
+    const removePeerFromCircleRes = await request(app)
+      .delete(
+        `/api/stream/circles/${encodeURIComponent(String(createdStreamCircle.id))}/members/${encodeURIComponent(
+          String(peerUser.id)
+        )}`
+      )
+      .set(authHeader(memberToken));
+    assert.equal(removePeerFromCircleRes.status, 200);
+    assert.equal(removePeerFromCircleRes.body.success, true);
+    assert.equal(removePeerFromCircleRes.body.removed, true);
+
+    const peerCirclePostBlockedAgainRes = await request(app)
+      .post("/api/stream/posts")
+      .set(authHeader(peerToken))
+      .send({
+        title: "Should fail after removal",
+        content: "Attempting to post inside closed circle after removal.",
+        excerpt: "Attempting to post inside closed circle after removal.",
+        intent: "Reflection",
+        status: "published",
+        circle_id: String(createdStreamCircle.id),
+      });
+    assert.equal(peerCirclePostBlockedAgainRes.status, 403);
+
+    const peerRejoinCircleRes = await request(app)
+      .post(`/api/stream/circles/${encodeURIComponent(String(createdStreamCircle.id))}/join`)
+      .set(authHeader(peerToken))
+      .send({});
+    assert.equal(peerRejoinCircleRes.status, 200);
+    assert.equal(peerRejoinCircleRes.body.success, true);
+    assert.equal(peerRejoinCircleRes.body.joined, true);
 
     const peerCirclePostRes = await request(app)
       .post("/api/stream/posts")
