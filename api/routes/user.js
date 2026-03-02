@@ -10,6 +10,8 @@ const { requireAdmin, requireSelfOrAdmin, requireCapabilities } = require("../mi
 
 const isBcryptHash = (value = "") => /^\$2[aby]\$\d{2}\$/.test(String(value));
 
+const escapeRegex = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const buildUserIdQuery = (rawId) => {
 	const asString = String(rawId);
 	const asNumber = Number.isNaN(Number(rawId)) ? null : Number(rawId);
@@ -108,22 +110,37 @@ router.get("/lookup", async (req, res, next) => {
 
 	// Continue with the lookup logic
 	try {
-		const { search } = req.query;
-		let query = {};
+		const rawSearch = String(req.query?.search || "").trim();
+		const limitRequested = Number(req.query?.limit || 20);
+		const limit = Number.isFinite(limitRequested) ? Math.max(1, Math.min(20, Math.floor(limitRequested))) : 20;
+		const query = { status: { $ne: "inactive" } };
 
-		if (search) {
-			const searchStr = String(search);
-			query = {
+		if (rawSearch) {
+			const escaped = escapeRegex(rawSearch.slice(0, 64));
+			Object.assign(query, {
 				$or: [
-					{ username: { $regex: searchStr, $options: "i" } },
-					{ email: { $regex: searchStr, $options: "i" } },
-					{ name: { $regex: searchStr, $options: "i" } }
-				]
-			};
+					{ username: { $regex: `^${escaped}`, $options: "i" } },
+					{ email: { $regex: `^${escaped}`, $options: "i" } },
+					{ first_name: { $regex: `^${escaped}`, $options: "i" } },
+					{ last_name: { $regex: `^${escaped}`, $options: "i" } },
+				],
+			});
 		}
 
-		const users = await User.find(query).limit(20);
-		res.json(users);
+		const users = await User.find(query)
+			.select("id username first_name last_name email role status avatar_url bio website twitter linkedin followers_count following_count verified createdAt lastLogin")
+			.sort({ lastLogin: -1, createdAt: -1 })
+			.limit(limit)
+			.lean()
+			.maxTimeMS(6000)
+			.exec();
+
+		const normalized = users.map((user) => ({
+			...user,
+			name: [user.first_name, user.last_name].filter(Boolean).join(" ").trim(),
+		}));
+
+		res.json(normalized);
 	} catch (error) {
 		console.error("Error looking up users:", error);
 		res.status(500).json({ error: "Error looking up users" });
