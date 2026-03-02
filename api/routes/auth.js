@@ -3,6 +3,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
+const mongoose = require("mongoose");
 const { v4: uuidv4 } = require("uuid");
 const router = express.Router();
 const User = require("../models/user");
@@ -109,6 +110,30 @@ function hashPasswordResetToken(rawToken) {
 	return crypto.createHash("sha256").update(String(rawToken || "")).digest("hex");
 }
 
+function isDatabaseUnavailableError(error) {
+	const message = String(error?.message || "").toLowerCase();
+	return (
+		String(error?.name || "").includes("MongooseServerSelectionError") ||
+		String(error?.name || "").includes("MongoNotConnectedError") ||
+		message.includes("buffering timed out") ||
+		message.includes("topology is closed") ||
+		message.includes("server selection timed out") ||
+		message.includes("not connected")
+	);
+}
+
+function isAuthConfigurationError(error) {
+	return String(error?.message || "").includes("JWT_SECRET is not configured");
+}
+
+function databaseUnavailableResponse(res) {
+	return res.status(503).json({
+		success: false,
+		message: "Service temporarily unavailable. Database is reconnecting.",
+		code: "DB_UNAVAILABLE",
+	});
+}
+
 function resolveFrontendBaseUrl(req) {
 	const configured =
 		process.env.FRONTEND_URL ||
@@ -196,6 +221,10 @@ router.post("/login", async (req, res) => {
 	}
 
 	try {
+		if (mongoose.connection.readyState !== 1) {
+			return databaseUnavailableResponse(res);
+		}
+
 		const normalizedEmail = identifier.toLowerCase();
 		const user = await User.findOne({
 			$or: [{ username: identifier }, { email: normalizedEmail }, { email: identifier }],
@@ -250,6 +279,16 @@ router.post("/login", async (req, res) => {
 		return res.json(await issueAuthResponse(user));
 	} catch (error) {
 		console.error("Auth login error:", error);
+		if (isDatabaseUnavailableError(error)) {
+			return databaseUnavailableResponse(res);
+		}
+		if (isAuthConfigurationError(error)) {
+			return res.status(503).json({
+				success: false,
+				message: "Authentication service is temporarily unavailable.",
+				code: "AUTH_CONFIG_ERROR",
+			});
+		}
 		return res.status(500).json({
 			success: false,
 			message: "Internal server error",
@@ -259,6 +298,10 @@ router.post("/login", async (req, res) => {
 
 router.post("/register", authenticateOptional, async (req, res) => {
 	try {
+		if (mongoose.connection.readyState !== 1) {
+			return databaseUnavailableResponse(res);
+		}
+
 		const {
 			username,
 			name,
@@ -320,6 +363,9 @@ router.post("/register", authenticateOptional, async (req, res) => {
 		});
 	} catch (error) {
 		console.error("Auth register error:", error);
+		if (isDatabaseUnavailableError(error)) {
+			return databaseUnavailableResponse(res);
+		}
 		return res.status(500).json({
 			success: false,
 			message: "Registration failed",
@@ -509,6 +555,16 @@ router.post("/refresh-token", async (req, res) => {
 		return res.json(authResponse);
 	} catch (error) {
 		console.error("Refresh token error:", error);
+		if (isDatabaseUnavailableError(error)) {
+			return databaseUnavailableResponse(res);
+		}
+		if (isAuthConfigurationError(error)) {
+			return res.status(503).json({
+				success: false,
+				message: "Authentication service is temporarily unavailable.",
+				code: "AUTH_CONFIG_ERROR",
+			});
+		}
 		return res.status(500).json({ success: false, message: "Failed to refresh token" });
 	}
 });

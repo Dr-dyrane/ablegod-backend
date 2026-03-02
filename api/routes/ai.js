@@ -39,7 +39,14 @@ const sanitizeForResponse = (settings) => ({
 });
 
 const getAdminAiSettings = async () => {
-    const admin = await User.findOne({ role: "admin" }).sort({ createdAt: 1 });
+    const adminWithProviderKeys = await User.findOne({
+        role: "admin",
+        $or: [
+            { "ai_settings.openai_key": { $exists: true, $nin: ["", null] } },
+            { "ai_settings.anthropic_key": { $exists: true, $nin: ["", null] } },
+        ],
+    }).sort({ createdAt: 1, lastLogin: -1 });
+    const admin = adminWithProviderKeys || (await User.findOne({ role: "admin" }).sort({ createdAt: 1 }));
     return normalizeAiSettings(admin?.ai_settings || {});
 };
 
@@ -63,8 +70,16 @@ const withAISettings = async (req, res, next) => {
     try {
         const authUser = req.auth?.user;
         if (!authUser) return res.status(401).json({ error: "Unauthorized" });
-
-        const user = await User.findOne({ id: authUser.id });
+        const authUserId = String(authUser.id || "");
+        const authUserIdNumeric = Number(authUserId);
+        const user =
+            authUser ||
+            (await User.findOne({
+                $or: [
+                    { id: authUserId },
+                    ...(Number.isFinite(authUserIdNumeric) ? [{ id: authUserIdNumeric }] : []),
+                ],
+            }));
         if (!user) return res.status(404).json({ error: "User not found" });
 
         const userSettings = normalizeAiSettings(user.ai_settings || {});

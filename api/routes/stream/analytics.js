@@ -1,4 +1,4 @@
-const { StreamPost, StreamReply, StreamFollow } = require("./_helpers");
+const { StreamPost, StreamReply, StreamFollow, StreamReport, User } = require("./_helpers");
 const MediaAsset = require("../../models/mediaAsset");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -7,6 +7,12 @@ function clampWindowDays(value) {
     const parsed = Number.parseInt(String(value || "30"), 10);
     if (!Number.isFinite(parsed)) return 30;
     return Math.min(Math.max(parsed, 7), 180);
+}
+
+function clampLimit(value, fallback = 30, max = 100) {
+    const parsed = Number.parseInt(String(value || ""), 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(Math.max(parsed, 1), max);
 }
 
 function getCapabilities(req) {
@@ -36,6 +42,10 @@ function safeNumber(value) {
     return Number.isFinite(numeric) ? numeric : 0;
 }
 
+function clampNumber(value, min, max) {
+    return Math.min(max, Math.max(min, safeNumber(value)));
+}
+
 function computeEngagementScore(post) {
     return (
         safeNumber(post.like_count) * 1 +
@@ -47,7 +57,31 @@ function computeEngagementScore(post) {
     );
 }
 
-function mountAnalyticsRoutes(router, { requirePostCreate }) {
+function computeCreatorTrustScore({ openReports, blockedPosts, restrictedPosts, featuredPosts }) {
+    const penalty = safeNumber(openReports) * 6 + safeNumber(blockedPosts) * 14 + safeNumber(restrictedPosts) * 8;
+    const credit = safeNumber(featuredPosts) * 2;
+    return clampNumber(100 - penalty + credit, 0, 100);
+}
+
+function computeCreatorGrowthScore(metrics) {
+    return Math.round(
+        (
+            safeNumber(metrics.viewsReceived) * 0.08 +
+            safeNumber(metrics.repliesReceived) * 2.2 +
+            safeNumber(metrics.reactionsReceived) * 1.1 +
+            safeNumber(metrics.sharesReceived) * 2.6 +
+            safeNumber(metrics.bookmarksReceived) * 1.8 +
+            safeNumber(metrics.restreamsReceived) * 2.8 +
+            safeNumber(metrics.posts) * 3 +
+            safeNumber(metrics.repliesAuthored) * 1.2 +
+            safeNumber(metrics.followerCount) * 0.35 +
+            safeNumber(metrics.trustScore) * 0.7
+        ) *
+            100
+    ) / 100;
+}
+
+function mountAnalyticsRoutes(router, { requirePostCreate, requireStreamFeature }) {
     router.get("/analytics/creator", ...requirePostCreate, async (req, res) => {
         try {
             const authUser = req.auth?.user;
@@ -289,6 +323,239 @@ function mountAnalyticsRoutes(router, { requirePostCreate }) {
         } catch (error) {
             console.error("Error loading creator analytics:", error);
             return res.status(500).json({ success: false, message: "Failed to load creator analytics" });
+        }
+    });
+
+    router.get("/admin/creators", ...requireStreamFeature, async (req, res) => {
+        try {
+            const windowDays = clampWindowDays(req.query.window_days);
+            const limit = clampLimit(req.query.limit, 30, 100);
+            const now = new Date();
+            const since = new Date(now.getTime() - windowDays * DAY_MS);
+            const sinceIso = since.toISOString();
+
+            const [postRollup, replyRollup, reportRollup, followRollup] = await Promise.all([
+                StreamPost.aggregate([
+                    {
+                        $match: {
+                            status: { $ne: "draft" },
+                            created_at: { $gte: sinceIso },
+                            author_user_id: { $exists: true, $ne: "" },
+                        },
+                    },
+                    {
+                        $group: {
+                            _id: "$author_user_id",
+                            posts: { $sum: 1 },
+                            views_received: { $sum: { $ifNull: ["$view_count", 0] } },
+                            replies_received: { $sum: { $ifNull: ["$reply_count", 0] } },
+                            reactions_received: { $sum: { $ifNull: ["$like_count", 0] } },
+                            shares_received: { $sum: { $ifNull: ["$share_count", 0] } },
+                            bookmarks_received: { $sum: { $ifNull: ["$bookmark_count", 0] } },
+                            restreams_received: { $sum: { $ifNull: ["$restream_count", 0] } },
+                            blocked_posts: {
+                                $sum: {
+                                    $cond: [{ $eq: ["$metadata.moderation_status", "blocked"] }, 1, 0],
+                                },
+                            },
+                            restricted_posts: {
+                                $sum: {
+                                    $cond: [{ $eq: ["$metadata.moderation_status", "restricted"] }, 1, 0],
+                                },
+                            },
+                            featured_posts: {
+                                $sum: {
+                                    $cond: [
+                                        {
+                                            $or: [
+                                                { $eq: ["$metadata.is_featured", true] },
+                                                { $eq: ["$metadata.featured", true] },
+                                            ],
+                                        },
+                                        1,
+                                        0,
+                                    ],
+                                },
+                            },
+                            video_posts: {
+                                $sum: {
+                                    $cond: [{ $eq: ["$media_type", "video"] }, 1, 0],
+                                },
+                            },
+                        },
+                    },
+                ]),
+                StreamReply.aggregate([
+                    {
+                        $match: {
+                            status: { $ne: "draft" },
+                            created_at: { $gte: sinceIso },
+                            author_user_id: { $exists: true, $ne: "" },
+                        },
+                    },
+                    {
+                        $group: {
+                            _id: "$author_user_id",
+                            replies_authored: { $sum: 1 },
+                        },
+                    },
+                ]),
+                StreamReport.aggregate([
+                    {
+                        $match: {
+                            status: { $in: ["open", "under_review"] },
+                            reported_user_id: { $exists: true, $ne: "" },
+                        },
+                    },
+                    {
+                        $group: {
+                            _id: "$reported_user_id",
+                            open_reports: { $sum: 1 },
+                        },
+                    },
+                ]),
+                StreamFollow.aggregate([
+                    {
+                        $match: {
+                            status: "active",
+                            followed_user_id: { $exists: true, $ne: "" },
+                        },
+                    },
+                    {
+                        $group: {
+                            _id: "$followed_user_id",
+                            follower_count: { $sum: 1 },
+                        },
+                    },
+                ]),
+            ]);
+
+            const postMap = new Map(
+                postRollup.map((entry) => [String(entry?._id || ""), entry]).filter((entry) => entry[0])
+            );
+            const replyMap = new Map(
+                replyRollup.map((entry) => [String(entry?._id || ""), entry]).filter((entry) => entry[0])
+            );
+            const reportMap = new Map(
+                reportRollup.map((entry) => [String(entry?._id || ""), entry]).filter((entry) => entry[0])
+            );
+            const followMap = new Map(
+                followRollup.map((entry) => [String(entry?._id || ""), entry]).filter((entry) => entry[0])
+            );
+
+            const userIds = Array.from(
+                new Set([
+                    ...Array.from(postMap.keys()),
+                    ...Array.from(replyMap.keys()),
+                    ...Array.from(reportMap.keys()),
+                    ...Array.from(followMap.keys()),
+                ])
+            );
+            const numericUserIds = userIds
+                .map((value) => Number(value))
+                .filter((value) => Number.isFinite(value));
+
+            const users = userIds.length
+                ? await User.find({
+                      status: { $ne: "inactive" },
+                      $or: [
+                          { id: { $in: userIds } },
+                          ...(numericUserIds.length > 0 ? [{ id: { $in: numericUserIds } }] : []),
+                      ],
+                  })
+                      .select(
+                          "id username first_name last_name email role status avatar_url followers_count following_count verified stream_creator_featured stream_creator_featured_updated_at"
+                      )
+                      .lean()
+                      .maxTimeMS(6000)
+                      .exec()
+                : [];
+
+            const creators = users
+                .map((user) => {
+                    const userId = String(user?.id || "");
+                    const postMetrics = postMap.get(userId) || {};
+                    const replyMetrics = replyMap.get(userId) || {};
+                    const reportMetrics = reportMap.get(userId) || {};
+                    const followMetrics = followMap.get(userId) || {};
+
+                    const followerCount = Math.max(
+                        safeNumber(followMetrics.follower_count),
+                        safeNumber(user?.followers_count)
+                    );
+                    const trustScore = computeCreatorTrustScore({
+                        openReports: safeNumber(reportMetrics.open_reports),
+                        blockedPosts: safeNumber(postMetrics.blocked_posts),
+                        restrictedPosts: safeNumber(postMetrics.restricted_posts),
+                        featuredPosts: safeNumber(postMetrics.featured_posts),
+                    });
+                    const growthScore = computeCreatorGrowthScore({
+                        viewsReceived: safeNumber(postMetrics.views_received),
+                        repliesReceived: safeNumber(postMetrics.replies_received),
+                        reactionsReceived: safeNumber(postMetrics.reactions_received),
+                        sharesReceived: safeNumber(postMetrics.shares_received),
+                        bookmarksReceived: safeNumber(postMetrics.bookmarks_received),
+                        restreamsReceived: safeNumber(postMetrics.restreams_received),
+                        posts: safeNumber(postMetrics.posts),
+                        repliesAuthored: safeNumber(replyMetrics.replies_authored),
+                        followerCount,
+                        trustScore,
+                    });
+
+                    return {
+                        user_id: userId,
+                        username: String(user?.username || ""),
+                        name:
+                            [String(user?.first_name || ""), String(user?.last_name || "")]
+                                .filter(Boolean)
+                                .join(" ")
+                                .trim() || String(user?.username || user?.email || "Member"),
+                        email: String(user?.email || ""),
+                        role: String(user?.role || "user"),
+                        status: String(user?.status || "active"),
+                        avatar_url: String(user?.avatar_url || ""),
+                        followers: followerCount,
+                        following: safeNumber(user?.following_count),
+                        posts: safeNumber(postMetrics.posts),
+                        replies_authored: safeNumber(replyMetrics.replies_authored),
+                        replies_received: safeNumber(postMetrics.replies_received),
+                        reactions_received: safeNumber(postMetrics.reactions_received),
+                        shares_received: safeNumber(postMetrics.shares_received),
+                        bookmarks_received: safeNumber(postMetrics.bookmarks_received),
+                        restreams_received: safeNumber(postMetrics.restreams_received),
+                        views_received: safeNumber(postMetrics.views_received),
+                        video_posts: safeNumber(postMetrics.video_posts),
+                        open_reports: safeNumber(reportMetrics.open_reports),
+                        blocked_posts: safeNumber(postMetrics.blocked_posts),
+                        restricted_posts: safeNumber(postMetrics.restricted_posts),
+                        featured_posts: safeNumber(postMetrics.featured_posts),
+                        trust_score: trustScore,
+                        growth_score: growthScore,
+                        is_featured_creator: Boolean(user?.stream_creator_featured || false),
+                        featured_creator_updated_at: user?.stream_creator_featured_updated_at || null,
+                        can_promote_to_author: String(user?.role || "user") === "user",
+                        can_demote_to_user: String(user?.role || "") === "author",
+                    };
+                })
+                .sort((a, b) => {
+                    const growthDiff = safeNumber(b.growth_score) - safeNumber(a.growth_score);
+                    if (growthDiff !== 0) return growthDiff;
+                    const trustDiff = safeNumber(b.trust_score) - safeNumber(a.trust_score);
+                    if (trustDiff !== 0) return trustDiff;
+                    return safeNumber(b.views_received) - safeNumber(a.views_received);
+                })
+                .slice(0, limit);
+
+            return res.json({
+                success: true,
+                generated_at: now.toISOString(),
+                window_days: windowDays,
+                creators,
+                count: creators.length,
+            });
+        } catch (error) {
+            console.error("Error loading creator leaderboard:", error);
+            return res.status(500).json({ success: false, message: "Failed to load creator leaderboard" });
         }
     });
 }

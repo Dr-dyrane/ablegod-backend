@@ -7,6 +7,7 @@ const {
     upsertStreamReport, markReportsForTarget,
     createModerationActionRecord, loadStreamAuditBundle,
     getPostCreatedAt,
+    User,
 } = require("./_helpers");
 const ChatMessage = require("../../models/chatMessage");
 const ChatConversation = require("../../models/chatConversation");
@@ -557,6 +558,105 @@ function mountAdminRoutes(router, { requireStreamModerate, requireStreamFeature,
         } catch (error) {
             console.error("Error updating chat message moderation:", error);
             return res.status(500).json({ success: false, message: "Failed to update chat moderation" });
+        }
+    });
+
+    // PATCH /admin/creators/:userId/promotion
+    router.patch("/admin/creators/:userId/promotion", ...requireStreamFeature, async (req, res) => {
+        try {
+            const targetUserId = String(req.params.userId || "").trim();
+            const requestedRoleRaw = req.body?.role;
+            const requestedRole = requestedRoleRaw ? String(requestedRoleRaw).trim().toLowerCase() : "";
+            const hasRoleChange = requestedRole === "author" || requestedRole === "user";
+            const hasFeaturedChange =
+                Object.prototype.hasOwnProperty.call(req.body || {}, "featured_creator") ||
+                Object.prototype.hasOwnProperty.call(req.body || {}, "featuredCreator");
+            const featuredCreator = Boolean(req.body?.featured_creator ?? req.body?.featuredCreator);
+
+            if (!targetUserId) {
+                return res.status(400).json({ success: false, message: "Target user is required" });
+            }
+
+            if (!hasRoleChange && !hasFeaturedChange) {
+                return res.status(400).json({
+                    success: false,
+                    message: "At least one promotion field must be provided",
+                });
+            }
+
+            const numericTargetUserId = Number(targetUserId);
+            const user = await User.findOne({
+                $or: [
+                    { id: targetUserId },
+                    ...(Number.isFinite(numericTargetUserId) ? [{ id: numericTargetUserId }] : []),
+                ],
+            });
+            if (!user) {
+                return res.status(404).json({ success: false, message: "Creator account not found" });
+            }
+
+            const currentRole = String(user.role || "user").toLowerCase();
+            if (currentRole === "admin" && hasRoleChange && requestedRole !== "admin") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Admin role cannot be changed from stream creator controls",
+                });
+            }
+
+            const now = new Date().toISOString();
+            let roleChanged = false;
+            if (hasRoleChange && requestedRole !== currentRole) {
+                user.role = requestedRole;
+                roleChanged = true;
+            }
+            if (hasFeaturedChange) {
+                user.stream_creator_featured = featuredCreator;
+                user.stream_creator_featured_updated_at = now;
+            }
+            await user.save();
+
+            if (roleChanged) {
+                await Promise.all([
+                    StreamPost.updateMany(
+                        { author_user_id: String(user.id || "") },
+                        { $set: { author_role: String(user.role || "user"), updated_at: now } }
+                    ),
+                    StreamReply.updateMany(
+                        { author_user_id: String(user.id || "") },
+                        { $set: { author_role: String(user.role || "user"), updated_at: now } }
+                    ),
+                ]);
+            }
+
+            const safeUser = {
+                id: String(user.id || ""),
+                username: String(user.username || ""),
+                name:
+                    [String(user.first_name || ""), String(user.last_name || "")]
+                        .filter(Boolean)
+                        .join(" ")
+                        .trim() || String(user.username || user.email || "Member"),
+                email: String(user.email || ""),
+                role: String(user.role || "user"),
+                status: String(user.status || "active"),
+                avatar_url: String(user.avatar_url || ""),
+                stream_creator_featured: Boolean(user.stream_creator_featured || false),
+                stream_creator_featured_updated_at: user.stream_creator_featured_updated_at || null,
+            };
+
+            return res.json({
+                success: true,
+                message: "Creator promotion settings updated",
+                user: safeUser,
+                role_changed: roleChanged,
+                featured_changed: hasFeaturedChange,
+            });
+        } catch (error) {
+            console.error("Error updating creator promotion settings:", error);
+            return res.status(500).json({
+                success: false,
+                message: "Failed to update creator promotion settings",
+            });
         }
     });
 

@@ -361,6 +361,23 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.ok(Number(signRes.body.upload?.limits?.max_video_upload_bytes || 0) > 0);
     assert.ok(Number(signRes.body.upload?.limits?.max_video_duration_seconds || 0) > 0);
 
+    const signVideoRes = await request(app)
+      .post("/api/media/sign-upload")
+      .set(authHeader(memberToken))
+      .send({
+        resource_type: "video",
+        folder: "ablegod/test",
+        tags: ["e2e", "video"],
+        file_bytes: 1024 * 1024,
+        duration: 20,
+      });
+    assert.equal(signVideoRes.status, 200);
+    assert.equal(signVideoRes.body.success, true);
+    assert.equal(String(signVideoRes.body.upload?.resource_type), "video");
+    assert.ok(Array.isArray(signVideoRes.body.upload?.eager));
+    assert.ok(signVideoRes.body.upload?.eager?.length >= 1);
+    assert.equal(Boolean(signVideoRes.body.upload?.eager_async), true);
+
     const registerRes = await request(app)
       .post("/api/media/assets/register")
       .set(authHeader(memberToken))
@@ -410,6 +427,14 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
         (asset) => String(asset.public_id) === String(createdMediaAsset.public_id)
       )
     );
+
+    const statusRes = await request(app)
+      .get(`/api/media/assets/${encodeURIComponent(String(createdMediaAsset.id))}/status`)
+      .set(authHeader(memberToken));
+    assert.equal(statusRes.status, 200);
+    assert.equal(statusRes.body.success, true);
+    assert.equal(String(statusRes.body.asset?.id), String(createdMediaAsset.id));
+    assert.ok(["ready", "pending", "failed", "deleted"].includes(String(statusRes.body.asset?.status || "")));
 
     const analyticsRes = await request(app)
       .get("/api/media/assets/analytics")
@@ -815,6 +840,12 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
         String(u.id) === String(memberUser.id)
       )
     );
+    const lookedUpMember = userLookupRes.body.find(
+      (u) => String(u.id) === String(memberUser.id)
+    );
+    assert.ok(lookedUpMember);
+    assert.equal(Object.prototype.hasOwnProperty.call(lookedUpMember, "password"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(lookedUpMember, "ai_settings"), false);
 
     // blog listing should support simple `q` search
     const blogSearchRes = await request(app)
@@ -1170,6 +1201,53 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
       .set(authHeader(peerToken))
       .query({ user_id: String(memberUser.id) });
     assert.equal(peerForbiddenScopedRes.status, 403);
+  });
+
+  await t.test("stream admin creator leaderboard + promotion controls", async () => {
+    const leaderboardRes = await request(app)
+      .get("/api/stream/admin/creators")
+      .set(authHeader(adminToken))
+      .query({ window_days: 30, limit: 20 });
+    assert.equal(leaderboardRes.status, 200);
+    assert.equal(leaderboardRes.body.success, true);
+    assert.ok(Array.isArray(leaderboardRes.body.creators));
+    assert.ok(
+      leaderboardRes.body.creators.some(
+        (creator) => String(creator.user_id) === String(memberUser.id)
+      )
+    );
+
+    const memberForbiddenLeaderboardRes = await request(app)
+      .get("/api/stream/admin/creators")
+      .set(authHeader(memberToken));
+    assert.equal(memberForbiddenLeaderboardRes.status, 403);
+
+    const promoteCreatorRes = await request(app)
+      .patch(`/api/stream/admin/creators/${encodeURIComponent(String(memberUser.id))}/promotion`)
+      .set(authHeader(adminToken))
+      .send({ role: "author", featured_creator: true });
+    assert.equal(promoteCreatorRes.status, 200);
+    assert.equal(promoteCreatorRes.body.success, true);
+    assert.equal(String(promoteCreatorRes.body.user?.role), "author");
+    assert.equal(Boolean(promoteCreatorRes.body.user?.stream_creator_featured), true);
+
+    const reloginPromotedCreatorRes = await request(app).post("/api/auth/login").send({
+      username: "member-e2e",
+      password: "memberpass456",
+    });
+    assert.equal(reloginPromotedCreatorRes.status, 200);
+    assert.equal(reloginPromotedCreatorRes.body.success, true);
+    memberToken = reloginPromotedCreatorRes.body.token;
+
+    const promotedSessionRes = await request(app)
+      .get("/api/auth/me")
+      .set(authHeader(memberToken));
+    assert.equal(promotedSessionRes.status, 200);
+    assert.equal(String(promotedSessionRes.body.user?.role), "author");
+    assert.ok(
+      Array.isArray(promotedSessionRes.body.user?.capabilities) &&
+        promotedSessionRes.body.user.capabilities.includes("analytics:read:creator")
+    );
   });
 
   await t.test("chat identity key registry + participants search endpoints", async () => {

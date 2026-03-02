@@ -25,6 +25,56 @@ function resolveAnthropicModel(preferredModel = "") {
     return DEFAULT_ANTHROPIC_MODEL;
 }
 
+function extractProviderErrorMessage(error) {
+    return (
+        error?.response?.data?.error?.message ||
+        error?.response?.data?.error?.code ||
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        error?.message ||
+        "AI provider request failed"
+    );
+}
+
+function isOpenAiQuotaOrBillingError(error) {
+    const detail = String(extractProviderErrorMessage(error) || "").toLowerCase();
+    return (
+        detail.includes("quota") ||
+        detail.includes("billing") ||
+        detail.includes("insufficient_quota") ||
+        detail.includes("billing_hard_limit")
+    );
+}
+
+function buildFallbackImageDataUrl({ prompt, concept }) {
+    const safePrompt = String(prompt || "").replace(/[<>&"]/g, " ").trim().slice(0, 180);
+    const safeConcept = String(concept || "")
+        .replace(/[<>&"]/g, " ")
+        .trim()
+        .slice(0, 120) || "Spiritual visual concept";
+    const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="60%" stop-color="#1b1f34"/>
+      <stop offset="100%" stop-color="#22142f"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect x="88" y="120" width="848" height="784" rx="56" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.18)"/>
+  <text x="512" y="250" text-anchor="middle" fill="#d6bcfa" font-size="28" font-family="Inter,Arial,sans-serif" letter-spacing="4">ABLEGOD STREAM</text>
+  <text x="140" y="350" fill="#f8fafc" font-size="40" font-family="Inter,Arial,sans-serif" font-weight="700">${safeConcept}</text>
+  <foreignObject x="140" y="402" width="744" height="360">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="color:#e2e8f0;font-family:Inter,Arial,sans-serif;font-size:26px;line-height:1.35;">
+      ${safePrompt}
+    </div>
+  </foreignObject>
+  <text x="140" y="862" fill="#94a3b8" font-size="20" font-family="Inter,Arial,sans-serif">Fallback visual generated while premium image provider is unavailable.</text>
+</svg>`;
+    return `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`;
+}
+
 /**
  * Service to handle AI-related tasks like content moderation,
  * writing assistance, and formatting using user-provided keys.
@@ -210,30 +260,87 @@ class AIService {
      * @returns {Promise<string>} - The image URL.
      */
     static async generateImage(prompt, aiSettings = {}) {
-        const { openai_key } = aiSettings;
+        const { openai_key, anthropic_key, preferred_model = DEFAULT_OPENAI_MODEL } = aiSettings;
+        let openAiError = null;
 
-        if (!openai_key) {
-            throw new Error("OpenAI key is required for image generation (DALL-E)");
-        }
+        if (openai_key) {
+            try {
+                const response = await axios.post(
+                    "https://api.openai.com/v1/images/generations",
+                    {
+                        model: "dall-e-3",
+                        prompt,
+                        n: 1,
+                        size: "1024x1024",
+                        quality: "standard"
+                    },
+                    {
+                        headers: {
+                            "Authorization": `Bearer ${openai_key}`,
+                            "Content-Type": "application/json"
+                        }
+                    }
+                );
 
-        const response = await axios.post(
-            "https://api.openai.com/v1/images/generations",
-            {
-                model: "dall-e-3",
-                prompt,
-                n: 1,
-                size: "1024x1024",
-                quality: "standard"
-            },
-            {
-                headers: {
-                    "Authorization": `Bearer ${openai_key}`,
-                    "Content-Type": "application/json"
+                return response.data.data[0].url;
+            } catch (error) {
+                openAiError = error;
+                console.error("OpenAI Image Error (Fallback triggered):", extractProviderErrorMessage(error));
+                if (!anthropic_key) {
+                    throw new Error(extractProviderErrorMessage(error));
                 }
             }
-        );
+        }
 
-        return response.data.data[0].url;
+        if (anthropic_key) {
+            try {
+                const anthropicModel = resolveAnthropicModel(preferred_model);
+                const conceptResponse = await axios.post(
+                    "https://api.anthropic.com/v1/messages",
+                    {
+                        model: anthropicModel,
+                        max_tokens: 120,
+                        messages: [
+                            {
+                                role: "user",
+                                content:
+                                    `Create a short spiritual visual concept title (max 8 words) for this prompt:\n${String(prompt || "").slice(0, 400)}`
+                            }
+                        ]
+                    },
+                    {
+                        headers: {
+                            "x-api-key": anthropic_key,
+                            "anthropic-version": "2023-06-01",
+                            "Content-Type": "application/json"
+                        }
+                    }
+                );
+
+                const concept =
+                    String(conceptResponse?.data?.content?.[0]?.text || "")
+                        .replace(/\s+/g, " ")
+                        .trim()
+                        .slice(0, 96) || "Spiritual visual concept";
+
+                return buildFallbackImageDataUrl({ prompt, concept });
+            } catch (anthropicError) {
+                console.error("Anthropic Image Fallback Error:", extractProviderErrorMessage(anthropicError));
+                if (openAiError) {
+                    throw new Error(
+                        isOpenAiQuotaOrBillingError(openAiError)
+                            ? "OpenAI image quota reached and Anthropic fallback failed."
+                            : extractProviderErrorMessage(openAiError)
+                    );
+                }
+                throw new Error(extractProviderErrorMessage(anthropicError));
+            }
+        }
+
+        if (openAiError) {
+            throw new Error(extractProviderErrorMessage(openAiError));
+        }
+        throw new Error("No AI provider key available for image generation.");
     }
 
     /**

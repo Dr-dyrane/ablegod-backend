@@ -21,6 +21,8 @@ const userSchema = new mongoose.Schema({
 	followers_count: { type: Number, default: 0 },
 	following_count: { type: Number, default: 0 },
 	verified: { type: Boolean, default: false },
+	stream_creator_featured: { type: Boolean, default: false, index: true },
+	stream_creator_featured_updated_at: String,
 	createdAt: String,
 	lastLogin: String,
 	recent_activity: { // Renamed/Structured for Portal compatibility if needed, or keeping simple

@@ -30,6 +30,41 @@ const parsePositiveInt = (value, fallback) => {
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const parseBoolean = (value, fallback = false) => {
+	if (value === undefined || value === null || value === "") return fallback;
+	const normalized = String(value).trim().toLowerCase();
+	if (["1", "true", "yes", "on"].includes(normalized)) return true;
+	if (["0", "false", "no", "off"].includes(normalized)) return false;
+	return fallback;
+};
+
+const parseVideoEagerProfiles = (value) => {
+	const raw = String(value || "q_auto:good,f_auto,vc_auto").trim();
+	if (!raw) return [];
+	return raw
+		.split("|")
+		.map((item) => item.trim())
+		.filter(Boolean);
+};
+
+const resolveBackendPublicBaseUrl = (req) => {
+	const configured =
+		process.env.BACKEND_PUBLIC_URL ||
+		process.env.API_PUBLIC_URL ||
+		process.env.APP_URL;
+	if (configured) return String(configured).replace(/\/+$/, "");
+
+	if (process.env.VERCEL_URL) {
+		return `https://${String(process.env.VERCEL_URL).replace(/\/+$/, "")}`;
+	}
+
+	const host = String(req.get("x-forwarded-host") || req.get("host") || "").trim();
+	if (!host) return "";
+	const forwardedProto = String(req.get("x-forwarded-proto") || "").trim();
+	const proto = forwardedProto || req.protocol || "https";
+	return `${proto}://${host}`;
+};
+
 const MAX_IMAGE_UPLOAD_BYTES = parsePositiveInt(
 	process.env.MEDIA_MAX_IMAGE_UPLOAD_BYTES,
 	12 * 1024 * 1024
@@ -42,6 +77,8 @@ const MAX_VIDEO_DURATION_SECONDS = parsePositiveInt(
 	process.env.MEDIA_MAX_VIDEO_DURATION_SECONDS,
 	180
 );
+const ENABLE_VIDEO_EAGER_TRANSCODE = parseBoolean(process.env.MEDIA_ENABLE_VIDEO_EAGER_TRANSCODE, true);
+const VIDEO_EAGER_PROFILES = parseVideoEagerProfiles(process.env.MEDIA_VIDEO_EAGER_PROFILES);
 
 const resolveUploadLimitBytes = (resourceType) =>
 	resourceType === "video" ? MAX_VIDEO_UPLOAD_BYTES : MAX_IMAGE_UPLOAD_BYTES;
@@ -177,6 +214,21 @@ router.post("/sign-upload", ...requireStreamCreate, async (req, res) => {
 			timestamp,
 		};
 
+		let eagerProfiles = [];
+		let notificationUrl = "";
+		let eagerAsync = false;
+		if (resourceType === "video" && ENABLE_VIDEO_EAGER_TRANSCODE && VIDEO_EAGER_PROFILES.length > 0) {
+			eagerProfiles = [...VIDEO_EAGER_PROFILES];
+			signableParams.eager = eagerProfiles.join("|");
+			eagerAsync = true;
+			signableParams.eager_async = "true";
+			const publicBaseUrl = resolveBackendPublicBaseUrl(req);
+			if (publicBaseUrl) {
+				notificationUrl = `${publicBaseUrl}/api/media/webhook/cloudinary`;
+				signableParams.notification_url = notificationUrl;
+			}
+		}
+
 		const tags = Array.isArray(req.body?.tags)
 			? req.body.tags.map((tag) => String(tag || "").trim()).filter(Boolean)
 			: [];
@@ -208,6 +260,9 @@ router.post("/sign-upload", ...requireStreamCreate, async (req, res) => {
 				resource_type: resourceType,
 				tags,
 				context: signableParams.context || "",
+				eager: eagerProfiles,
+				eager_async: eagerAsync,
+				notification_url: notificationUrl,
 				upload_url: `https://api.cloudinary.com/v1_1/${cfg.cloudName}/${resourceType}/upload`,
 				limits: {
 					max_image_upload_bytes: MAX_IMAGE_UPLOAD_BYTES,
@@ -268,6 +323,12 @@ router.post("/assets/register", ...requireStreamCreate, async (req, res) => {
 			payload.context && typeof payload.context === "object" ? payload.context : {};
 		const metadata =
 			payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {};
+		const eager =
+			Array.isArray(payload.eager) && payload.eager.length > 0
+				? payload.eager
+						.map((entry) => (entry && typeof entry === "object" ? entry : null))
+						.filter(Boolean)
+				: [];
 		const incomingStatus = String(payload.status || "ready").toLowerCase();
 		const status =
 			incomingStatus === "pending" ||
@@ -298,7 +359,7 @@ router.post("/assets/register", ...requireStreamCreate, async (req, res) => {
 				status,
 				tags,
 				context,
-				metadata,
+				metadata: eager.length > 0 ? { ...metadata, eager_outputs: eager } : metadata,
 				created_at: now,
 				updated_at: now,
 			});
@@ -318,7 +379,7 @@ router.post("/assets/register", ...requireStreamCreate, async (req, res) => {
 			asset.status = status;
 			asset.tags = tags;
 			asset.context = context;
-			asset.metadata = metadata;
+			asset.metadata = eager.length > 0 ? { ...metadata, eager_outputs: eager } : metadata;
 			asset.updated_at = now;
 		}
 
@@ -354,6 +415,41 @@ router.get("/assets/me", ...requireStreamCreate, async (req, res) => {
 			success: false,
 			message: "Failed to fetch media assets",
 		});
+	}
+});
+
+router.get("/assets/:assetId/status", ...requireStreamCreate, async (req, res) => {
+	try {
+		const authUserId = String(req.auth?.user?.id || "");
+		const assetId = String(req.params.assetId || "").trim();
+		if (!assetId) {
+			return res.status(400).json({ success: false, message: "assetId is required" });
+		}
+		const asset = await MediaAsset.findOne({
+			owner_user_id: authUserId,
+			$or: [{ id: assetId }, { public_id: assetId }],
+		});
+		if (!asset) {
+			return res.status(404).json({ success: false, message: "Media asset not found" });
+		}
+		const metadata =
+			asset.metadata && typeof asset.metadata === "object" ? asset.metadata : {};
+		return res.json({
+			success: true,
+			asset: {
+				id: String(asset.id || ""),
+				public_id: String(asset.public_id || ""),
+				resource_type: String(asset.resource_type || "image"),
+				status: String(asset.status || "ready"),
+				secure_url: String(asset.secure_url || ""),
+				duration: Math.max(0, Number(asset.duration || 0)),
+				eager_outputs: Array.isArray(metadata.eager_outputs) ? metadata.eager_outputs : [],
+				updated_at: asset.updated_at || asset.created_at,
+			},
+		});
+	} catch (error) {
+		console.error("Error fetching media asset status:", error);
+		return res.status(500).json({ success: false, message: "Failed to fetch media asset status" });
 	}
 });
 
@@ -438,7 +534,14 @@ router.post("/webhook/cloudinary", express.json({ type: "*/*" }), async (req, re
 		if (!asset) return res.status(200).json({ success: true, ignored: true });
 
 		const now = new Date().toISOString();
-		asset.status = String(body.notification_type || "").includes("failed") ? "failed" : "ready";
+		const notificationType = String(body.notification_type || "").toLowerCase();
+		if (notificationType.includes("fail") || notificationType.includes("error")) {
+			asset.status = "failed";
+		} else if (notificationType.includes("eager") || notificationType.includes("processing")) {
+			asset.status = "pending";
+		} else {
+			asset.status = "ready";
+		}
 		asset.secure_url = String(body.secure_url || asset.secure_url || "");
 		asset.url = String(body.url || asset.url || asset.secure_url || "");
 		asset.resource_type = normalizeResourceType(body.resource_type || asset.resource_type);
@@ -453,6 +556,12 @@ router.post("/webhook/cloudinary", express.json({ type: "*/*" }), async (req, re
 			asset.metadata && typeof asset.metadata === "object" ? { ...asset.metadata } : {};
 		nextMetadata.webhook_last_payload = body;
 		nextMetadata.webhook_last_seen_at = now;
+		if (Array.isArray(body.eager) && body.eager.length > 0) {
+			nextMetadata.eager_outputs = body.eager;
+			if (asset.status !== "failed") {
+				asset.status = "ready";
+			}
+		}
 		asset.metadata = nextMetadata;
 		await asset.save();
 

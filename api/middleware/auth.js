@@ -13,6 +13,10 @@ function authError(res, status, message) {
 	});
 }
 
+function isJwtSecretConfigurationError(error) {
+	return String(error?.message || "").includes("JWT_SECRET is not configured");
+}
+
 function getJwtSecret() {
 	if (authRuntimeState.cachedJwtSecret) return authRuntimeState.cachedJwtSecret;
 
@@ -95,6 +99,13 @@ async function authenticate(req, res, next) {
 
 		next();
 	} catch (error) {
+		if (isJwtSecretConfigurationError(error)) {
+			return res.status(503).json({
+				success: false,
+				message: "Authentication service is temporarily unavailable.",
+				code: "AUTH_CONFIG_ERROR",
+			});
+		}
 		if (error?.statusCode === 403) {
 			return authError(res, 403, error.message || "Account is inactive");
 		}

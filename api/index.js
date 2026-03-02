@@ -151,42 +151,127 @@ app.options("*", cors(corsOptions));
 
 app.use(express.json());
 
+const mongoRuntime =
+	globalThis.__ABLEGOD_MONGO_RUNTIME__ || {
+		connectPromise: null,
+		lastError: null,
+		lastConnectedAt: null,
+		activeConnectionLabel: null,
+		attemptedConnectionLabels: [],
+	};
+globalThis.__ABLEGOD_MONGO_RUNTIME__ = mongoRuntime;
+
+const MONGO_READY_STATE_LABELS = {
+	0: "disconnected",
+	1: "connected",
+	2: "connecting",
+	3: "disconnecting",
+};
+
+function getMongoReadyStateLabel() {
+	return MONGO_READY_STATE_LABELS[mongoose.connection.readyState] || "unknown";
+}
+
+function getMongoConnectionCandidates() {
+	const primaryUri = String(process.env.MONGODB_URI || "").trim();
+	const secondaryUri = String(
+		process.env.MONGODB_URI_FALLBACK || process.env.MONGODB_URI_SECONDARY || ""
+	).trim();
+	const candidates = [];
+
+	if (primaryUri) candidates.push({ label: "primary", uri: primaryUri });
+	if (secondaryUri && secondaryUri !== primaryUri) {
+		candidates.push({ label: "secondary", uri: secondaryUri });
+	}
+
+	return candidates;
+}
+
+async function ensureMongoConnection() {
+	if (mongoose.connection.readyState === 1) return mongoose.connection;
+
+	const candidates = getMongoConnectionCandidates();
+	if (candidates.length === 0) {
+		const error = new Error("MONGODB_URI is not configured");
+		error.code = "MONGO_URI_MISSING";
+		throw error;
+	}
+
+	if (!mongoRuntime.connectPromise) {
+		mongoRuntime.connectPromise = (async () => {
+			let lastError = null;
+
+			for (let index = 0; index < candidates.length; index += 1) {
+				const candidate = candidates[index];
+				try {
+					if (index > 0 && mongoose.connection.readyState !== 0) {
+						await mongoose.disconnect().catch(() => undefined);
+					}
+					if (!mongoRuntime.attemptedConnectionLabels.includes(candidate.label)) {
+						mongoRuntime.attemptedConnectionLabels.push(candidate.label);
+					}
+					const conn = await mongoose.connect(candidate.uri, {
+						serverSelectionTimeoutMS: Number(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS || 10000),
+					});
+					mongoRuntime.lastError = null;
+					mongoRuntime.lastConnectedAt = new Date().toISOString();
+					mongoRuntime.activeConnectionLabel = candidate.label;
+					console.log(`MongoDB connected (${candidate.label})`);
+					return conn;
+				} catch (error) {
+					lastError = error;
+					mongoRuntime.lastError = error;
+					console.warn(`[MongoDB] Connection attempt failed (${candidate.label}):`, error?.message || error);
+				}
+			}
+
+			throw lastError || new Error("Unable to connect to MongoDB");
+		})()
+			.catch((error) => {
+				mongoRuntime.lastError = error;
+				mongoRuntime.connectPromise = null;
+				throw error;
+			});
+	}
+
+	return mongoRuntime.connectPromise;
+}
 
 
-// Debug route - no database dependency
 
-app.get("/api/debug", (req, res) => {
+// Debug route
+app.get("/api/debug", async (req, res) => {
+	let connectionCheck = "not_attempted";
+	try {
+		await ensureMongoConnection();
+		connectionCheck = "connected";
+	} catch (_error) {
+		connectionCheck = "failed";
+	}
 
 	res.json({
-
 		message: "Debug route working - MongoDB Check",
-
 		origin: req.headers.origin,
-
 		timestamp: new Date().toISOString(),
-
 		mongodb: {
-
 			readyState: mongoose.connection.readyState,
-
-			host: mongoose.connection.host || 'Not connected',
-
-			name: mongoose.connection.name || 'Not connected'
-
+			readyStateLabel: getMongoReadyStateLabel(),
+			host: mongoose.connection.host || "Not connected",
+			name: mongoose.connection.name || "Not connected",
+			connectionCheck,
+			activeConnectionLabel: mongoRuntime.activeConnectionLabel,
+			attemptedConnectionLabels: mongoRuntime.attemptedConnectionLabels,
+			lastConnectedAt: mongoRuntime.lastConnectedAt,
+			lastError: mongoRuntime.lastError ? String(mongoRuntime.lastError.message || mongoRuntime.lastError) : null,
 		},
-
 		env: {
-
 			hasMongodbUri: !!process.env.MONGODB_URI,
-
 			mongodbUriLength: process.env.MONGODB_URI ? process.env.MONGODB_URI.length : 0,
-
-			nodeEnv: process.env.NODE_ENV || 'development'
-
-		}
-
+			hasMongodbFallbackUri: Boolean(process.env.MONGODB_URI_FALLBACK || process.env.MONGODB_URI_SECONDARY),
+			hasJwtSecret: Boolean(process.env.JWT_SECRET),
+			nodeEnv: process.env.NODE_ENV || "development",
+		},
 	});
-
 });
 
 
@@ -197,21 +282,36 @@ app.get("/api/debug", (req, res) => {
 
 // -----------------------------
 
-if (!process.env.MONGODB_URI) {
+if (!process.env.MONGODB_URI && !process.env.MONGODB_URI_FALLBACK && !process.env.MONGODB_URI_SECONDARY) {
 
-	console.warn("[MongoDB] Missing MONGODB_URI — server will likely fail DB routes.");
+	console.warn("[MongoDB] Missing MONGODB_URI and fallback URIs - server will likely fail DB routes.");
 
 } else {
 
-	mongoose
-
-		.connect(process.env.MONGODB_URI, {})
-
-		.then(() => console.log("MongoDB connected"))
-
-		.catch((err) => console.error("MongoDB connection error:", err));
+	ensureMongoConnection().catch((err) => console.error("MongoDB connection error:", err));
 
 }
+
+app.use("/api", async (req, res, next) => {
+	if (req.path === "/debug" || req.path === "/pusher/test") {
+		return next();
+	}
+
+	try {
+		await ensureMongoConnection();
+		return next();
+	} catch (error) {
+		const message =
+			process.env.NODE_ENV === "production"
+				? "Service temporarily unavailable. Database is reconnecting."
+				: `Service temporarily unavailable. Database is reconnecting. (${String(error?.message || "unknown error")})`;
+		return res.status(503).json({
+			success: false,
+			message,
+			code: "DB_UNAVAILABLE",
+		});
+	}
+});
 
 
 
@@ -1018,3 +1118,4 @@ module.exports.app = app;
 module.exports.server = server;
 module.exports.io = io;
 module.exports.mongoose = mongoose;
+
