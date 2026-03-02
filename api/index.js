@@ -361,10 +361,11 @@ io.on("connection", (socket) => {
 		const userId = typeof data === "string" ? data : data?.userId;
 
 		if (userId) {
-
-			socket.join(`user-${userId}`);
-
-			console.log(`Socket ${socket.id} joined user-${userId}`);
+			const roomName = `user-${userId}`;
+			if (!socket.rooms.has(roomName)) {
+				socket.join(roomName);
+				console.log(`Socket ${socket.id} joined ${roomName}`);
+			}
 
 		}
 
@@ -377,13 +378,28 @@ io.on("connection", (socket) => {
 		const conversationId = typeof data === "string" ? data : data?.conversationId;
 
 		if (conversationId) {
-
-			socket.join(`conversation-${conversationId}`);
-
-			console.log(`Socket ${socket.id} joined conversation-${conversationId}`);
+			const roomName = `conversation-${conversationId}`;
+			if (!socket.rooms.has(roomName)) {
+				socket.join(roomName);
+				console.log(`Socket ${socket.id} joined ${roomName}`);
+			}
 
 		}
 
+	});
+
+	socket.on("leaveUserRoom", (data) => {
+		const userId = typeof data === "string" ? data : data?.userId;
+		if (userId) {
+			socket.leave(`user-${userId}`);
+		}
+	});
+
+	socket.on("leaveConversationRoom", (data) => {
+		const conversationId = typeof data === "string" ? data : data?.conversationId;
+		if (conversationId) {
+			socket.leave(`conversation-${conversationId}`);
+		}
 	});
 
 
