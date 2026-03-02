@@ -336,6 +336,24 @@ The backend includes an automated email system using Nodemailer and React Email 
 - `GET /api/debug/email-preview/platform-update`
 - `GET /api/debug/email-preview/invite`
 
+### Local Email Preview (Quick Start)
+1. Start backend:
+   ```bash
+   npm start
+   ```
+2. Use the port printed by the server log (`Server (Hybrid) is running on port ...`).
+3. Open routes in browser (replace `<port>`):
+   - `http://localhost:<port>/api/debug/email-preview`
+   - `http://localhost:<port>/api/debug/email-preview/welcome?name=Dyrane`
+   - `http://localhost:<port>/api/debug/email-preview/newsletter?title=New%20Stream%20Update`
+   - `http://localhost:<port>/api/debug/email-preview/password-reset?name=Dyrane`
+   - `http://localhost:<port>/api/debug/email-preview/platform-update?headline=Feature%20Launch`
+   - `http://localhost:<port>/api/debug/email-preview/invite?name=Dyrane&feature=Stream`
+
+Notes:
+- Local preview does not require `EMAIL_PREVIEW_KEY` unless you run with `NODE_ENV=production`.
+- Default code port is `3000` unless overridden by `PORT`.
+
 Production protection:
 - Set `EMAIL_PREVIEW_KEY`, then pass `?key=<value>` or `x-email-preview-key` header.
 
