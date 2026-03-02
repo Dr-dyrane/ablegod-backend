@@ -868,6 +868,19 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.equal(reportCircleRes.body.success, true);
     assert.ok(Number(reportCircleRes.body.report_count) >= 1);
 
+    const adminReportsAfterCircleReportRes = await request(app)
+      .get("/api/stream/admin/reports")
+      .set(authHeader(adminToken))
+      .query({ limit: 40 });
+    assert.equal(adminReportsAfterCircleReportRes.status, 200);
+    assert.equal(adminReportsAfterCircleReportRes.body.success, true);
+    assert.ok(Array.isArray(adminReportsAfterCircleReportRes.body.circle_reports));
+    assert.ok(
+      adminReportsAfterCircleReportRes.body.circle_reports.some(
+        (entry) => String(entry.id) === String(createdStreamCircle.id)
+      )
+    );
+
     const adminCirclesRes = await request(app)
       .get("/api/stream/admin/circles")
       .set(authHeader(adminToken))

@@ -1,6 +1,6 @@
 const { v4: uuidv4 } = require("uuid");
 const {
-    StreamPost, StreamReply, StreamReport,
+    StreamPost, StreamReply, StreamReport, StreamCircle,
     serializePost, serializeReply, serializeReport, serializeModerationAction,
     ensureMetadataObject, getAuthDisplayName,
     syncPostReportSummary, syncReplyReportSummary,
@@ -92,6 +92,9 @@ function mountAdminRoutes(router, { requireStreamModerate, requireStreamFeature,
             const activeReports = await StreamReport.find({
                 status: { $in: ["open", "under_review"] },
             }).sort({ updated_at: -1, created_at: -1 }).limit(400);
+            const circleReports = activeReports.filter(
+                (report) => String(report.target_type || "") === "circle"
+            );
 
             const reportCountsByPostId = new Map();
             const replyReportCountsByPostId = new Map();
@@ -132,9 +135,54 @@ function mountAdminRoutes(router, { requireStreamModerate, requireStreamFeature,
                 .slice(0, limit)
                 .map(({ post }) => serializePost(post));
 
+            const circleIds = Array.from(
+                new Set(
+                    circleReports
+                        .map((report) => String(report.target_id || ""))
+                        .filter(Boolean)
+                )
+            );
+            const circles = circleIds.length
+                ? await StreamCircle.find({ id: { $in: circleIds } }).limit(limit * 2)
+                : [];
+            const circleMap = new Map(circles.map((circle) => [String(circle.id || ""), circle]));
+            const circleReportCountById = new Map();
+            for (const report of circleReports) {
+                const circleId = String(report.target_id || "");
+                if (!circleId) continue;
+                circleReportCountById.set(circleId, Number(circleReportCountById.get(circleId) || 0) + 1);
+            }
+            const circleQueue = Array.from(circleReportCountById.entries())
+                .map(([circleId, count]) => {
+                    const circle = circleMap.get(circleId);
+                    const latestReport = circleReports.find((report) => String(report.target_id || "") === circleId);
+                    return {
+                        id: circleId,
+                        report_count: Number(count || 0),
+                        latest_report_at: latestReport?.updated_at || latestReport?.created_at || null,
+                        circle: circle
+                            ? {
+                                id: String(circle.id || ""),
+                                slug: String(circle.slug || ""),
+                                name: String(circle.name || ""),
+                                visibility: String(circle.visibility || "public"),
+                                owner_user_id: String(circle.owner_user_id || ""),
+                                owner_name: String(circle.owner_name || ""),
+                                member_count: Number(circle.member_count || 0),
+                                post_count: Number(circle.post_count || 0),
+                                updated_at: circle.updated_at,
+                                metadata: circle.metadata && typeof circle.metadata === "object" ? circle.metadata : {},
+                            }
+                            : null,
+                    };
+                })
+                .sort((a, b) => Number(b.report_count || 0) - Number(a.report_count || 0))
+                .slice(0, limit);
+
             return res.json({
                 success: true, reports: queue, count: queue.length,
                 report_entries: activeReports.slice(0, Math.min(limit * 3, 150)).map(serializeReport),
+                circle_reports: circleQueue,
             });
         } catch (error) {
             console.error("Error fetching stream moderation queue:", error);
