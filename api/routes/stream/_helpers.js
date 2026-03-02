@@ -7,6 +7,7 @@ const StreamRestream = require("../../models/streamRestream");
 const StreamFollow = require("../../models/streamFollow");
 const StreamReport = require("../../models/streamReport");
 const StreamModerationAction = require("../../models/streamModerationAction");
+const StreamShare = require("../../models/streamShare");
 const Notification = require("../../models/notification");
 const User = require("../../models/user");
 
@@ -563,5 +564,5 @@ module.exports = {
     createModerationActionRecord, loadStreamAuditBundle,
     // Models (re-export for convenience)
     StreamPost, StreamReply, StreamReaction, StreamBookmark, StreamRestream,
-    StreamFollow, StreamReport, StreamModerationAction, Notification, User,
+    StreamFollow, StreamReport, StreamModerationAction, StreamShare, Notification, User,
 };

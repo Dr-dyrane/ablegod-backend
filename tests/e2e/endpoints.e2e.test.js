@@ -90,16 +90,10 @@ test.before(async () => {
   process.env.NODE_ENV = "test";
   process.env.JWT_SECRET = "ablegod-e2e-jwt-secret";
   process.env.PORT = "0";
+  process.env.UPLOADS_DIR = path.join(__dirname, ".tmp", "uploads");
 
-  const uploadsDir = path.join(__dirname, "../../public/uploads");
+  const uploadsDir = process.env.UPLOADS_DIR;
   fs.mkdirSync(uploadsDir, { recursive: true });
-  // ensure a minimal index.html exists so SPA fallback returns 200 during tests
-  const indexFile = path.join(__dirname, "../../public/index.html");
-  try {
-    fs.writeFileSync(indexFile, "<html><body>test</body></html>");
-  } catch (e) {
-    console.warn("could not create dummy index.html", e.message);
-  }
 
   mongoServer = await MongoMemoryServer.create();
   process.env.MONGODB_URI = mongoServer.getUri("ablegod_backend_e2e");
@@ -155,6 +149,15 @@ test.after(async () => {
 
   if (mongoServer) {
     await settleWithin(mongoServer.stop(), 5000);
+  }
+
+  try {
+    const tmpDir = path.join(__dirname, ".tmp");
+    if (fs.existsSync(tmpDir)) {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  } catch {
+    // no-op
   }
 });
 
@@ -233,14 +236,9 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
   });
 
   await t.test("upload endpoint must reject unauthenticated requests", async () => {
-    const tmpPath2 = path.join(__dirname, "test-image2.png");
-    fs.writeFileSync(tmpPath2, "dummy");
-
     const badUpload = await request(app)
       .post("/api/upload")
-      .attach("image", tmpPath2);
-
-    fs.unlinkSync(tmpPath2);
+      .send({});
 
     assert.ok([401, 403].includes(badUpload.status));
   });
@@ -579,6 +577,60 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.equal(trendingRes.body.success, true);
     assert.ok(Array.isArray(trendingRes.body.tags));
     assert.ok(trendingRes.body.tags.includes("faith"));
+
+    const createStreamShareRes = await request(app)
+      .post("/api/stream/shares")
+      .set(authHeader(memberToken))
+      .send({
+        post_id: String(createdStreamPost.id),
+        title: "Shared reflection title",
+        excerpt: "Shared reflection excerpt",
+        author_name: "Member E2E",
+        intent: "Reflection",
+        created_at: createdStreamPost.created_at,
+        snapshot_url: "https://example.com/stream-share-snapshot.png",
+      });
+    assert.equal(createStreamShareRes.status, 201);
+    assert.equal(createStreamShareRes.body.success, true);
+    assert.ok(createStreamShareRes.body.share?.id);
+    assert.equal(String(createStreamShareRes.body.share.post_id), String(createdStreamPost.id));
+    assert.equal(
+      String(createStreamShareRes.body.share.snapshot_url),
+      "https://example.com/stream-share-snapshot.png"
+    );
+
+    const createdShareId = createStreamShareRes.body.share.id;
+    const publicShareRes = await request(app).get(
+      `/api/stream/public/shares/${encodeURIComponent(String(createdShareId))}`
+    );
+    assert.equal(publicShareRes.status, 200);
+    assert.equal(publicShareRes.body.success, true);
+    assert.equal(String(publicShareRes.body.share.id), String(createdShareId));
+    assert.equal(String(publicShareRes.body.share.post_id), String(createdStreamPost.id));
+
+    const publicShareMetaRes = await request(app).get(
+      `/api/stream/public/posts/${encodeURIComponent(String(createdStreamPost.id))}/share-meta`
+    );
+    assert.equal(publicShareMetaRes.status, 200);
+    assert.equal(publicShareMetaRes.body.success, true);
+    assert.equal(String(publicShareMetaRes.body.post.id), String(createdStreamPost.id));
+
+    const createReplyShareRes = await request(app)
+      .post("/api/stream/shares")
+      .set(authHeader(peerToken))
+      .send({
+        post_id: String(createdStreamPost.id),
+        reply_id: String(createdStreamReply.id),
+        title: "Reply share",
+        excerpt: "Reply snapshot excerpt",
+        author_name: "Peer E2E",
+        intent: "Reply",
+        created_at: createdStreamReply.created_at,
+      });
+    assert.equal(createReplyShareRes.status, 201);
+    assert.equal(createReplyShareRes.body.success, true);
+    assert.equal(String(createReplyShareRes.body.share.post_id), String(createdStreamPost.id));
+    assert.equal(String(createReplyShareRes.body.share.reply_id), String(createdStreamReply.id));
 
     // user lookup should return members when searching by username/email
     const userLookupRes = await request(app)

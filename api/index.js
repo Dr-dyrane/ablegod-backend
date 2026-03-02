@@ -482,7 +482,9 @@ const { v4: uuidv4 } = require("uuid");
 
 
 
-const uploadsDir = process.env.VERCEL ? "/tmp" : path.join(projectRoot, "public", "uploads");
+const uploadsDir =
+	process.env.UPLOADS_DIR ||
+	(process.env.VERCEL ? "/tmp" : path.join(projectRoot, "public", "uploads"));
 
 
 
