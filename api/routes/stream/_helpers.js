@@ -78,6 +78,8 @@ const serializePost = (post, options = {}) => {
         content: String(post.content || ""),
         excerpt: String(post.excerpt || ""),
         image_url: String(post.image_url || ""),
+        media_url: String(post.media_url || post.image_url || ""),
+        media_type: String(post.media_type || post?.metadata?.media_type || "image"),
         status: String(post.status || "published"),
         reply_count: Number(post.reply_count || 0),
         like_count: Number(post.like_count || totalReactions),

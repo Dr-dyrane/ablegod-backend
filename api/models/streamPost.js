@@ -13,6 +13,8 @@ const streamPostSchema = new mongoose.Schema(
 		content: String,
 		excerpt: String,
 		image_url: String,
+		media_url: String,
+		media_type: { type: String, enum: ["image", "video", "raw"], default: "image" },
 		status: { type: String, default: "published" }, // published | draft
 		reply_count: { type: Number, default: 0 },
 		like_count: { type: Number, default: 0 },

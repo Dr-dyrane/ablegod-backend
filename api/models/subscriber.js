@@ -7,6 +7,7 @@ const subscriberSchema = new mongoose.Schema({
 	name: String,
 	email: { type: String, unique: true, required: true },
 	status: { type: String, enum: ["active", "inactive"], default: "active" },
+	invite_token: { type: String, default: "" },
 	subscribedAt: { type: Date, default: Date.now },
 });
 

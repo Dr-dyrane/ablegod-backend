@@ -269,6 +269,7 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
             const {
                 title = "", content = "", excerpt = "",
                 intent = "Reflection", image_url, imageUrl,
+                media_url, mediaUrl, media_type, mediaType,
                 status = "published", metadata = {},
                 circle_id, circleId,
             } = req.body || {};
@@ -300,12 +301,23 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
                 console.error("AI Moderation Pre-check failed:", aiErr);
             }
 
+            const resolvedMediaUrl = String(media_url || mediaUrl || image_url || imageUrl || "").trim();
+            const requestedMediaType = String(media_type || mediaType || "").toLowerCase();
+            const resolvedMediaType =
+                requestedMediaType === "video" || requestedMediaType === "raw" || requestedMediaType === "image"
+                    ? requestedMediaType
+                    : "image";
+
             const now = new Date().toISOString();
             const requestedCircleIdentifier = String(circle_id || circleId || "").trim();
             const safeMetadata =
                 metadata && typeof metadata === "object" && !Array.isArray(metadata)
                     ? { ...metadata }
                     : {};
+            safeMetadata.media_type = String(safeMetadata.media_type || resolvedMediaType || "image");
+            if (resolvedMediaUrl) {
+                safeMetadata.media_url = String(safeMetadata.media_url || resolvedMediaUrl);
+            }
             let targetCircle = null;
             if (requestedCircleIdentifier) {
                 targetCircle = await resolveCircleByIdentifier(requestedCircleIdentifier);
@@ -339,7 +351,9 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
                 title: String(title || "").trim(),
                 content: normalizedContent,
                 excerpt: String(excerpt || normalizedContent.slice(0, 180)).trim(),
-                image_url: String(image_url || imageUrl || "").trim(),
+                image_url: String(image_url || imageUrl || resolvedMediaUrl || "").trim(),
+                media_url: resolvedMediaUrl,
+                media_type: resolvedMediaType,
                 status: String(status || "published"),
                 reply_count: 0,
                 like_count: 0,
@@ -369,7 +383,7 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
         try {
             const authUser = req.auth.user;
             const { id } = req.params;
-            const { title, content, image_url, imageUrl, reason = "User edit" } = req.body || {};
+            const { title, content, image_url, imageUrl, media_url, mediaUrl, media_type, mediaType, reason = "User edit" } = req.body || {};
 
             const post = await StreamPost.findOne({ id });
             if (!post) return res.status(404).json({ success: false, message: "Post not found" });
@@ -387,6 +401,28 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
             if (title !== undefined) post.title = String(title).trim();
             const finalImageUrl = String(image_url || imageUrl || "").trim();
             if (image_url !== undefined || imageUrl !== undefined) post.image_url = finalImageUrl;
+            const finalMediaUrl = String(media_url || mediaUrl || "").trim();
+            if (media_url !== undefined || mediaUrl !== undefined) {
+                post.media_url = finalMediaUrl;
+                if (!post.image_url) {
+                    post.image_url = finalMediaUrl;
+                }
+                const nextMetadata =
+                    post.metadata && typeof post.metadata === "object" ? { ...post.metadata } : {};
+                nextMetadata.media_url = finalMediaUrl;
+                post.metadata = nextMetadata;
+            }
+            if (media_type !== undefined || mediaType !== undefined) {
+                const nextMediaType = String(media_type || mediaType || "").toLowerCase();
+                post.media_type =
+                    nextMediaType === "video" || nextMediaType === "raw" || nextMediaType === "image"
+                        ? nextMediaType
+                        : "image";
+                const nextMetadata =
+                    post.metadata && typeof post.metadata === "object" ? { ...post.metadata } : {};
+                nextMetadata.media_type = post.media_type;
+                post.metadata = nextMetadata;
+            }
             post.updated_at = new Date().toISOString();
             if (content !== undefined) post.excerpt = post.content.slice(0, 180).replace(/\s+/g, " ").trim();
 

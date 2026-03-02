@@ -10,6 +10,49 @@ const router = express.Router();
 const requireStreamCreate = requireCapabilities("stream:create");
 const requireCreatorAnalytics = requireCapabilities("analytics:read:creator", "analytics:read:admin");
 
+const ALLOWED_IMAGE_MIME_TYPES = new Set([
+	"image/jpeg",
+	"image/png",
+	"image/webp",
+	"image/gif",
+	"image/avif",
+]);
+
+const ALLOWED_VIDEO_MIME_TYPES = new Set([
+	"video/mp4",
+	"video/webm",
+	"video/quicktime",
+	"video/ogg",
+]);
+
+const parsePositiveInt = (value, fallback) => {
+	const parsed = Number.parseInt(String(value || ""), 10);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const MAX_IMAGE_UPLOAD_BYTES = parsePositiveInt(
+	process.env.MEDIA_MAX_IMAGE_UPLOAD_BYTES,
+	12 * 1024 * 1024
+);
+const MAX_VIDEO_UPLOAD_BYTES = parsePositiveInt(
+	process.env.MEDIA_MAX_VIDEO_UPLOAD_BYTES,
+	80 * 1024 * 1024
+);
+const MAX_VIDEO_DURATION_SECONDS = parsePositiveInt(
+	process.env.MEDIA_MAX_VIDEO_DURATION_SECONDS,
+	180
+);
+
+const resolveUploadLimitBytes = (resourceType) =>
+	resourceType === "video" ? MAX_VIDEO_UPLOAD_BYTES : MAX_IMAGE_UPLOAD_BYTES;
+
+const validateDeclaredMimeType = (resourceType, mimeType) => {
+	const normalizedMime = String(mimeType || "").trim().toLowerCase();
+	if (!normalizedMime) return true;
+	if (resourceType === "video") return ALLOWED_VIDEO_MIME_TYPES.has(normalizedMime);
+	return ALLOWED_IMAGE_MIME_TYPES.has(normalizedMime);
+};
+
 const resolveCloudinaryConfig = () => {
 	const cloudinaryUrl = process.env.CLOUDINARY_URL || "";
 	const cloudName = process.env.CLOUDINARY_CLOUD_NAME || "";
@@ -69,6 +112,19 @@ const sanitizePublicId = (value) =>
 		.replace(/-+/g, "-")
 		.replace(/^-|-$/g, "");
 
+async function destroyCloudinaryAsset(publicId, resourceType = "image") {
+	const normalizedPublicId = String(publicId || "").trim();
+	if (!normalizedPublicId) return;
+	try {
+		await cloudinary.uploader.destroy(normalizedPublicId, {
+			resource_type: resourceType === "video" || resourceType === "raw" ? resourceType : "image",
+			invalidate: true,
+		});
+	} catch (error) {
+		console.warn("Failed to destroy oversized Cloudinary asset:", error?.message || error);
+	}
+}
+
 router.post("/sign-upload", ...requireStreamCreate, async (req, res) => {
 	try {
 		const cfg = resolveCloudinaryConfig();
@@ -81,6 +137,34 @@ router.post("/sign-upload", ...requireStreamCreate, async (req, res) => {
 
 		const authUser = req.auth?.user || {};
 		const resourceType = normalizeResourceType(req.body?.resource_type || req.body?.resourceType);
+		const declaredBytes = Math.max(0, Number(req.body?.file_bytes || req.body?.fileBytes || 0));
+		const declaredDuration = Math.max(0, Number(req.body?.duration || 0));
+		const declaredMimeType = String(req.body?.mime_type || req.body?.mimeType || "").trim().toLowerCase();
+		const maxBytes = resolveUploadLimitBytes(resourceType);
+		if (declaredBytes > 0 && declaredBytes > maxBytes) {
+			return res.status(413).json({
+				success: false,
+				message:
+					resourceType === "video"
+						? `Video exceeds size limit (${Math.round(MAX_VIDEO_UPLOAD_BYTES / (1024 * 1024))} MB).`
+						: `Image exceeds size limit (${Math.round(MAX_IMAGE_UPLOAD_BYTES / (1024 * 1024))} MB).`,
+			});
+		}
+		if (!validateDeclaredMimeType(resourceType, declaredMimeType)) {
+			return res.status(415).json({
+				success: false,
+				message:
+					resourceType === "video"
+						? "Unsupported video format. Use MP4, WebM, MOV, or OGG."
+						: "Unsupported image format. Use JPEG, PNG, WebP, GIF, or AVIF.",
+			});
+		}
+		if (resourceType === "video" && declaredDuration > MAX_VIDEO_DURATION_SECONDS) {
+			return res.status(413).json({
+				success: false,
+				message: `Video duration exceeds limit (${MAX_VIDEO_DURATION_SECONDS} seconds).`,
+			});
+		}
 		const folder = sanitizeFolder(req.body?.folder || req.body?.upload_folder || "ablegod/uploads");
 		const timestamp = Math.floor(Date.now() / 1000);
 		const requestedPublicId = sanitizePublicId(req.body?.public_id || req.body?.publicId);
@@ -125,6 +209,11 @@ router.post("/sign-upload", ...requireStreamCreate, async (req, res) => {
 				tags,
 				context: signableParams.context || "",
 				upload_url: `https://api.cloudinary.com/v1_1/${cfg.cloudName}/${resourceType}/upload`,
+				limits: {
+					max_image_upload_bytes: MAX_IMAGE_UPLOAD_BYTES,
+					max_video_upload_bytes: MAX_VIDEO_UPLOAD_BYTES,
+					max_video_duration_seconds: MAX_VIDEO_DURATION_SECONDS,
+				},
 			},
 		});
 	} catch (error) {
@@ -151,6 +240,26 @@ router.post("/assets/register", ...requireStreamCreate, async (req, res) => {
 
 		const now = new Date().toISOString();
 		const resourceType = normalizeResourceType(payload.resource_type || payload.resourceType);
+		const bytes = Math.max(0, Number(payload.bytes || 0));
+		const duration = Math.max(0, Number(payload.duration || 0));
+		const maxBytes = resolveUploadLimitBytes(resourceType);
+		if (bytes > maxBytes) {
+			await destroyCloudinaryAsset(publicId, resourceType);
+			return res.status(413).json({
+				success: false,
+				message:
+					resourceType === "video"
+						? `Video exceeds size limit (${Math.round(MAX_VIDEO_UPLOAD_BYTES / (1024 * 1024))} MB).`
+						: `Image exceeds size limit (${Math.round(MAX_IMAGE_UPLOAD_BYTES / (1024 * 1024))} MB).`,
+			});
+		}
+		if (resourceType === "video" && duration > MAX_VIDEO_DURATION_SECONDS) {
+			await destroyCloudinaryAsset(publicId, resourceType);
+			return res.status(413).json({
+				success: false,
+				message: `Video duration exceeds limit (${MAX_VIDEO_DURATION_SECONDS} seconds).`,
+			});
+		}
 		const folder = sanitizeFolder(payload.folder || payload.asset_folder || "ablegod/uploads");
 		const tags = Array.isArray(payload.tags)
 			? payload.tags.map((tag) => String(tag || "").trim()).filter(Boolean)
@@ -182,10 +291,10 @@ router.post("/assets/register", ...requireStreamCreate, async (req, res) => {
 				url: String(payload.url || secureUrl),
 				format: String(payload.format || ""),
 				version: String(payload.version || ""),
-				bytes: Math.max(0, Number(payload.bytes || 0)),
+				bytes,
 				width: Math.max(0, Number(payload.width || 0)),
 				height: Math.max(0, Number(payload.height || 0)),
-				duration: Math.max(0, Number(payload.duration || 0)),
+				duration,
 				status,
 				tags,
 				context,
@@ -202,10 +311,10 @@ router.post("/assets/register", ...requireStreamCreate, async (req, res) => {
 			asset.url = String(payload.url || secureUrl);
 			asset.format = String(payload.format || asset.format || "");
 			asset.version = String(payload.version || asset.version || "");
-			asset.bytes = Math.max(0, Number(payload.bytes || asset.bytes || 0));
+			asset.bytes = bytes || Math.max(0, Number(asset.bytes || 0));
 			asset.width = Math.max(0, Number(payload.width || asset.width || 0));
 			asset.height = Math.max(0, Number(payload.height || asset.height || 0));
-			asset.duration = Math.max(0, Number(payload.duration || asset.duration || 0));
+			asset.duration = duration || Math.max(0, Number(asset.duration || 0));
 			asset.status = status;
 			asset.tags = tags;
 			asset.context = context;

@@ -97,7 +97,36 @@ router.get("/settings", authenticate, withAISettings, async (req, res) => {
 
 router.put("/settings", authenticate, withAISettings, async (req, res) => {
     try {
-        const nextSettings = normalizeAiSettings(req.body || {});
+        const incoming = req.body && typeof req.body === "object" ? req.body : {};
+        const current = normalizeAiSettings(req.dbUser?.ai_settings || {});
+        const nextSettings = normalizeAiSettings({
+            ...current,
+            ...incoming,
+            openai_key:
+                Object.prototype.hasOwnProperty.call(incoming, "openai_key")
+                    ? incoming.openai_key
+                    : current.openai_key,
+            anthropic_key:
+                Object.prototype.hasOwnProperty.call(incoming, "anthropic_key")
+                    ? incoming.anthropic_key
+                    : current.anthropic_key,
+            preferred_model:
+                Object.prototype.hasOwnProperty.call(incoming, "preferred_model")
+                    ? incoming.preferred_model
+                    : current.preferred_model,
+            enable_writing_assistant:
+                Object.prototype.hasOwnProperty.call(incoming, "enable_writing_assistant")
+                    ? incoming.enable_writing_assistant
+                    : current.enable_writing_assistant,
+            enable_bible_suggestions:
+                Object.prototype.hasOwnProperty.call(incoming, "enable_bible_suggestions")
+                    ? incoming.enable_bible_suggestions
+                    : current.enable_bible_suggestions,
+            enable_content_moderation:
+                Object.prototype.hasOwnProperty.call(incoming, "enable_content_moderation")
+                    ? incoming.enable_content_moderation
+                    : current.enable_content_moderation,
+        });
         const user = req.dbUser;
         user.ai_settings = nextSettings;
         await user.save();

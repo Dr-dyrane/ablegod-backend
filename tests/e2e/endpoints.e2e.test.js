@@ -357,6 +357,9 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.ok(signRes.body.upload);
     assert.ok(signRes.body.upload.signature);
     assert.equal(String(signRes.body.upload.resource_type), "image");
+    assert.ok(Number(signRes.body.upload?.limits?.max_image_upload_bytes || 0) > 0);
+    assert.ok(Number(signRes.body.upload?.limits?.max_video_upload_bytes || 0) > 0);
+    assert.ok(Number(signRes.body.upload?.limits?.max_video_duration_seconds || 0) > 0);
 
     const registerRes = await request(app)
       .post("/api/media/assets/register")
@@ -378,6 +381,22 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.equal(registerRes.body.success, true);
     assert.ok(registerRes.body.asset?.id);
     createdMediaAsset = registerRes.body.asset;
+
+    const oversizedVideoRes = await request(app)
+      .post("/api/media/assets/register")
+      .set(authHeader(memberToken))
+      .send({
+        asset: {
+          public_id: `ablegod/test/e2e-oversized-video-${Date.now()}`,
+          secure_url: "https://res.cloudinary.com/dwvnnoxyd/video/upload/v1/ablegod/test/e2e.mp4",
+          resource_type: "video",
+          bytes: 200 * 1024 * 1024,
+          duration: 400,
+          format: "mp4",
+        },
+      });
+    assert.equal(oversizedVideoRes.status, 413);
+    assert.equal(oversizedVideoRes.body.success, false);
 
     const listRes = await request(app)
       .get("/api/media/assets/me")
@@ -431,6 +450,42 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.equal(newPasswordLoginRes.body.success, true);
     memberToken = newPasswordLoginRes.body.token;
     assert.ok(memberToken);
+  });
+
+  await t.test("subscriber endpoints: create + campaign + invite", async () => {
+    const createSubscriberRes = await request(app).post("/api/subscribers").send({
+      id: 9001,
+      name: "Subscriber E2E",
+      email: "subscriber.e2e@ablegod.test",
+    });
+    assert.equal(createSubscriberRes.status, 201);
+    assert.equal(createSubscriberRes.body.email, "subscriber.e2e@ablegod.test");
+
+    const campaignRes = await request(app)
+      .post("/api/subscribers/campaign")
+      .set(authHeader(adminToken))
+      .send({
+        subject: "AbleGod Stream Update",
+        headline: "Stream is live",
+        body: "We shipped stream and creator tools for your community.",
+        cta_url: "https://www.chistanwrites.blog/user",
+      });
+    assert.equal(campaignRes.status, 200);
+    assert.equal(campaignRes.body.success, true);
+    assert.ok(Number(campaignRes.body.audience?.targeted || 0) >= 1);
+
+    const inviteRes = await request(app)
+      .post("/api/subscribers/invite")
+      .set(authHeader(adminToken))
+      .send({
+        email: "invite.e2e@ablegod.test",
+        name: "Invite E2E",
+        invite_url: "https://www.chistanwrites.blog/user",
+        feature_name: "Stream",
+      });
+    assert.equal(inviteRes.status, 201);
+    assert.equal(inviteRes.body.success, true);
+    assert.equal(inviteRes.body.invite?.email, "invite.e2e@ablegod.test");
   });
 
   await t.test("admin user endpoints: POST /api/users and GET /api/users/:id", async () => {
