@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require("uuid");
 const ChatConversation = require("../models/chatConversation");
 const ChatMessage = require("../models/chatMessage");
 const ChatIdentityKey = require("../models/chatIdentityKey");
+const StreamReport = require("../models/streamReport");
 const User = require("../models/user");
 const Notification = require("../models/notification");
 const { requireCapabilities, authenticate } = require("../middleware/auth");
@@ -91,6 +92,49 @@ function createChatRoutes(pusher) {
 			metadata: notification.metadata || {},
 		};
 		pusher.trigger(`user-${notification.user_id}`, "notification:new", payload);
+	};
+
+	const getAuthDisplayName = (authUser, fallback = "Member") =>
+		[String(authUser?.first_name), String(authUser?.last_name)]
+			.filter((value) => value && value !== "undefined")
+			.join(" ")
+			.trim() || authUser?.username || authUser?.email || fallback;
+
+	const ensureMessageMetadata = (message) => {
+		if (!message) return {};
+		const metadata =
+			message.metadata && typeof message.metadata === "object" ? { ...message.metadata } : {};
+		message.metadata = metadata;
+		return metadata;
+	};
+
+	const syncChatMessageReportSummary = async (message) => {
+		if (!message) return message;
+		const metadata = ensureMessageMetadata(message);
+		const activeReports = await StreamReport.find({
+			target_type: "chat_message",
+			target_id: String(message.id),
+			status: { $in: ["open", "under_review"] },
+		})
+			.sort({ updated_at: -1, created_at: -1 })
+			.limit(50);
+		metadata.report_events = activeReports.map((report) => ({
+			id: String(report.id || ""),
+			user_id: String(report.reporter_user_id || ""),
+			user_name: String(report.reporter_name || "Member"),
+			reason: String(report.reason || "other"),
+			note: String(report.note || ""),
+			status: String(report.status || "open"),
+			created_at: report.created_at,
+			updated_at: report.updated_at || report.created_at,
+			target_type: "chat_message",
+			target_id: String(report.target_id || message.id),
+		}));
+		metadata.report_count = metadata.report_events.length;
+		if (!metadata.report_count && String(metadata.moderation_status || "").toLowerCase() === "review") {
+			delete metadata.moderation_status;
+		}
+		return message;
 	};
 
 	router.get("/identity-keys/me", ...requireChatRead, async (req, res) => {
@@ -370,6 +414,121 @@ function createChatRoutes(pusher) {
 			return res.status(500).json({ success: false, message: "Failed to fetch messages" });
 		}
 	});
+
+	router.post(
+		"/conversations/:conversationId/messages/:messageId/report",
+		...requireChatSend,
+		ensureConversationMember,
+		async (req, res) => {
+			try {
+				const authUser = req.auth.user;
+				const authUserId = String(authUser?.id || "");
+				const conversationId = String(req.chatConversation?.id || req.params.conversationId || "");
+				const messageId = String(req.params.messageId || "");
+				if (!messageId) {
+					return res.status(400).json({ success: false, message: "Message id is required" });
+				}
+
+				const reason = String(req.body?.reason || "other").trim().slice(0, 80) || "other";
+				const note = String(req.body?.note || "").trim().slice(0, 500);
+				const message = await ChatMessage.findOne({
+					id: messageId,
+					conversation_id: conversationId,
+				});
+				if (!message) {
+					return res.status(404).json({ success: false, message: "Chat message not found" });
+				}
+
+				const now = new Date().toISOString();
+				const existing = await StreamReport.findOne({
+					target_type: "chat_message",
+					target_id: messageId,
+					reporter_user_id: authUserId,
+					status: { $in: ["open", "under_review"] },
+				}).sort({ updated_at: -1, created_at: -1 });
+
+				const payload = {
+					target_type: "chat_message",
+					target_id: messageId,
+					post_id: "",
+					reply_id: null,
+					reported_user_id: String(message.sender_id || ""),
+					reporter_user_id: authUserId,
+					reporter_name: getAuthDisplayName(authUser, "Member"),
+					reason,
+					note,
+					status: "open",
+					resolved_by_user_id: null,
+					resolved_by_name: null,
+					resolved_at: null,
+					updated_at: now,
+					metadata: {
+						conversation_id: conversationId,
+						message_id: messageId,
+						content_type: String(message.content_type || "text"),
+						content_preview: String(message.content || "").slice(0, 180),
+						sender_id: String(message.sender_id || ""),
+						message_created_at: message.created_at || now,
+					},
+				};
+
+				let report;
+				if (existing) {
+					existing.reason = payload.reason;
+					existing.note = payload.note;
+					existing.status = payload.status;
+					existing.updated_at = payload.updated_at;
+					existing.resolved_by_user_id = null;
+					existing.resolved_by_name = null;
+					existing.resolved_at = null;
+					existing.metadata = payload.metadata;
+					report = await existing.save();
+				} else {
+					report = await new StreamReport({
+						id: uuidv4(),
+						...payload,
+						created_at: now,
+					}).save();
+				}
+
+				const messageMetadata = ensureMessageMetadata(message);
+				if (!messageMetadata.moderation_status) {
+					messageMetadata.moderation_status = "review";
+				}
+				await syncChatMessageReportSummary(message);
+				message.edited_at = message.edited_at || null;
+				await message.save();
+
+				return res.status(201).json({
+					success: true,
+					message: "Chat message report submitted",
+					report: {
+						id: String(report.id || ""),
+						target_type: String(report.target_type || "chat_message"),
+						target_id: String(report.target_id || ""),
+						reason: String(report.reason || "other"),
+						note: String(report.note || ""),
+						status: String(report.status || "open"),
+						created_at: report.created_at,
+						updated_at: report.updated_at || report.created_at,
+					},
+					chat_message: {
+						id: String(message.id || ""),
+						conversation_id: String(message.conversation_id || ""),
+						sender_id: String(message.sender_id || ""),
+						content_type: String(message.content_type || "text"),
+						created_at: message.created_at,
+						metadata: message.metadata || {},
+					},
+					report_count: Number(message.metadata?.report_count || 0),
+					moderation_status: String(message.metadata?.moderation_status || ""),
+				});
+			} catch (error) {
+				console.error("Error reporting chat message:", error);
+				return res.status(500).json({ success: false, message: "Failed to report chat message" });
+			}
+		}
+	);
 
 	router.post("/conversations/:conversationId/messages", ...requireChatSend, ensureConversationMember, async (req, res) => {
 		try {

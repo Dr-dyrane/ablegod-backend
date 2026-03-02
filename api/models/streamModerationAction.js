@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const streamModerationActionSchema = new mongoose.Schema(
 	{
 		id: { type: String, index: true, unique: true },
-		target_type: { type: String, enum: ["post", "reply"], index: true },
+		target_type: { type: String, enum: ["post", "reply", "circle", "chat_message"], index: true },
 		target_id: { type: String, index: true },
 		post_id: { type: String, index: true },
 		reply_id: { type: String, default: null, index: true },

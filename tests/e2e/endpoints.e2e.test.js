@@ -1097,6 +1097,58 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
       )
     );
 
+    const reportChatMessageRes = await request(app)
+      .post(
+        `/api/chat/conversations/${encodeURIComponent(String(createdConversation.id))}/messages/${encodeURIComponent(
+          String(createdMessage.id)
+        )}/report`
+      )
+      .set(authHeader(peerToken))
+      .send({
+        reason: "abuse",
+        note: "Chat moderation e2e validation",
+      });
+    assert.equal(reportChatMessageRes.status, 201);
+    assert.equal(reportChatMessageRes.body.success, true);
+    assert.ok(Number(reportChatMessageRes.body.report_count) >= 1);
+
+    const adminReportsAfterChatReportRes = await request(app)
+      .get("/api/stream/admin/reports")
+      .set(authHeader(adminToken))
+      .query({ limit: 40 });
+    assert.equal(adminReportsAfterChatReportRes.status, 200);
+    assert.equal(adminReportsAfterChatReportRes.body.success, true);
+    assert.ok(Array.isArray(adminReportsAfterChatReportRes.body.chat_reports));
+    assert.ok(
+      adminReportsAfterChatReportRes.body.chat_reports.some(
+        (entry) => String(entry.id) === String(createdMessage.id)
+      )
+    );
+
+    const moderateChatMessageRes = await request(app)
+      .patch(`/api/stream/admin/chat/messages/${encodeURIComponent(String(createdMessage.id))}/moderation`)
+      .set(authHeader(adminToken))
+      .send({
+        action: "clear",
+        clear_reports: true,
+      });
+    assert.equal(moderateChatMessageRes.status, 200);
+    assert.equal(moderateChatMessageRes.body.success, true);
+    assert.equal(String(moderateChatMessageRes.body.chat_message.id), String(createdMessage.id));
+    assert.equal(Number(moderateChatMessageRes.body.chat_message.report_count), 0);
+
+    const adminReportsAfterChatClearRes = await request(app)
+      .get("/api/stream/admin/reports")
+      .set(authHeader(adminToken))
+      .query({ limit: 40 });
+    assert.equal(adminReportsAfterChatClearRes.status, 200);
+    assert.equal(adminReportsAfterChatClearRes.body.success, true);
+    assert.ok(
+      !adminReportsAfterChatClearRes.body.chat_reports.some(
+        (entry) => String(entry.id) === String(createdMessage.id)
+      )
+    );
+
     // Group conversation path smoke test (same endpoint contract, different type validation)
     const groupConversationRes = await request(app)
       .post("/api/chat/conversations")

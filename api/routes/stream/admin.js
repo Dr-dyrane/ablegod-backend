@@ -8,6 +8,8 @@ const {
     createModerationActionRecord, loadStreamAuditBundle,
     getPostCreatedAt,
 } = require("./_helpers");
+const ChatMessage = require("../../models/chatMessage");
+const ChatConversation = require("../../models/chatConversation");
 
 function itemScore(reportCount, moderationStatus) {
     const moderationWeight =
@@ -15,6 +17,57 @@ function itemScore(reportCount, moderationStatus) {
             moderationStatus === "restricted" ? 14 :
                 moderationStatus === "review" ? 8 : 0;
     return Math.max(0, Number(reportCount || 0)) * 10 + moderationWeight;
+}
+
+async function syncChatMessageReportSummary(message) {
+    if (!message) return message;
+    const metadata = ensureMetadataObject(message);
+    const activeReports = await StreamReport.find({
+        target_type: "chat_message",
+        target_id: String(message.id || ""),
+        status: { $in: ["open", "under_review"] },
+    })
+        .sort({ updated_at: -1, created_at: -1 })
+        .limit(50);
+    metadata.report_events = activeReports.map((report) => ({
+        id: String(report.id || ""),
+        user_id: String(report.reporter_user_id || ""),
+        user_name: String(report.reporter_name || "Member"),
+        reason: String(report.reason || "other"),
+        note: String(report.note || ""),
+        status: String(report.status || "open"),
+        created_at: report.created_at,
+        updated_at: report.updated_at || report.created_at,
+        target_type: "chat_message",
+        target_id: String(report.target_id || message.id || ""),
+    }));
+    metadata.report_count = metadata.report_events.length;
+    if (!metadata.report_count && String(metadata.moderation_status || "").toLowerCase() === "review") {
+        delete metadata.moderation_status;
+    }
+    return message;
+}
+
+function serializeChatMessageModeration(message, conversation = null) {
+    const metadata = message?.metadata && typeof message.metadata === "object" ? message.metadata : {};
+    return {
+        id: String(message?.id || ""),
+        conversation_id: String(message?.conversation_id || ""),
+        conversation_name: String(conversation?.name || ""),
+        conversation_type: String(conversation?.type || ""),
+        sender_id: String(message?.sender_id || ""),
+        content_type: String(message?.content_type || "text"),
+        content_preview: String(
+            message?.content ||
+            metadata.content_preview ||
+            "Encrypted message"
+        ).slice(0, 180),
+        created_at: message?.created_at,
+        deleted_at: message?.deleted_at || null,
+        moderation_status: String(metadata.moderation_status || ""),
+        report_count: Number(metadata.report_count || 0),
+        metadata,
+    };
 }
 
 function mountAdminRoutes(router, { requireStreamModerate, requireStreamFeature, requirePostInteract }) {
@@ -94,6 +147,9 @@ function mountAdminRoutes(router, { requireStreamModerate, requireStreamFeature,
             }).sort({ updated_at: -1, created_at: -1 }).limit(400);
             const circleReports = activeReports.filter(
                 (report) => String(report.target_type || "") === "circle"
+            );
+            const chatReports = activeReports.filter(
+                (report) => String(report.target_type || "") === "chat_message"
             );
 
             const reportCountsByPostId = new Map();
@@ -179,10 +235,74 @@ function mountAdminRoutes(router, { requireStreamModerate, requireStreamFeature,
                 .sort((a, b) => Number(b.report_count || 0) - Number(a.report_count || 0))
                 .slice(0, limit);
 
+            const chatMessageIds = Array.from(
+                new Set(
+                    chatReports
+                        .map((report) => String(report.target_id || ""))
+                        .filter(Boolean)
+                )
+            );
+            const chatMessages = chatMessageIds.length
+                ? await ChatMessage.find({ id: { $in: chatMessageIds } }).limit(limit * 4)
+                : [];
+            const chatMessageMap = new Map(
+                chatMessages.map((message) => [String(message.id || ""), message])
+            );
+            const chatConversationIds = Array.from(
+                new Set(
+                    chatMessages
+                        .map((message) => String(message.conversation_id || ""))
+                        .filter(Boolean)
+                )
+            );
+            const chatConversations = chatConversationIds.length
+                ? await ChatConversation.find({ id: { $in: chatConversationIds } }).limit(limit * 2)
+                : [];
+            const conversationMap = new Map(
+                chatConversations.map((conversation) => [String(conversation.id || ""), conversation])
+            );
+            const chatReportCountById = new Map();
+            const latestChatReportById = new Map();
+            for (const report of chatReports) {
+                const messageId = String(report.target_id || "");
+                if (!messageId) continue;
+                chatReportCountById.set(messageId, Number(chatReportCountById.get(messageId) || 0) + 1);
+                const existing = latestChatReportById.get(messageId);
+                const existingTimestamp = new Date(existing?.updated_at || existing?.created_at || 0).getTime();
+                const nextTimestamp = new Date(report.updated_at || report.created_at || 0).getTime();
+                if (!existing || nextTimestamp >= existingTimestamp) {
+                    latestChatReportById.set(messageId, report);
+                }
+            }
+            const chatQueue = Array.from(chatReportCountById.entries())
+                .map(([messageId, count]) => {
+                    const message = chatMessageMap.get(messageId);
+                    const conversation = message
+                        ? conversationMap.get(String(message.conversation_id || ""))
+                        : null;
+                    const latestReport = latestChatReportById.get(messageId);
+                    return {
+                        id: messageId,
+                        report_count: Number(count || 0),
+                        latest_report_at: latestReport?.updated_at || latestReport?.created_at || null,
+                        message: message ? serializeChatMessageModeration(message, conversation) : null,
+                        latest_report: latestReport ? serializeReport(latestReport) : null,
+                    };
+                })
+                .sort((a, b) => {
+                    const countDiff = Number(b.report_count || 0) - Number(a.report_count || 0);
+                    if (countDiff !== 0) return countDiff;
+                    const timeA = new Date(a.latest_report_at || 0).getTime();
+                    const timeB = new Date(b.latest_report_at || 0).getTime();
+                    return timeB - timeA;
+                })
+                .slice(0, limit);
+
             return res.json({
                 success: true, reports: queue, count: queue.length,
                 report_entries: activeReports.slice(0, Math.min(limit * 3, 150)).map(serializeReport),
                 circle_reports: circleQueue,
+                chat_reports: chatQueue,
             });
         } catch (error) {
             console.error("Error fetching stream moderation queue:", error);
@@ -349,6 +469,97 @@ function mountAdminRoutes(router, { requireStreamModerate, requireStreamFeature,
     });
 
     // ─── PATCH /admin/posts/:id/feature ───
+    // ─── PATCH /admin/chat/messages/:messageId/moderation ───
+    router.patch("/admin/chat/messages/:messageId/moderation", ...requireStreamModerate, async (req, res) => {
+        try {
+            const messageId = String(req.params.messageId || "");
+            const action = String(req.body?.action || req.body?.status || "").trim().toLowerCase();
+            const note = String(req.body?.note || "").trim().slice(0, 500);
+            const clearReports = Boolean(req.body?.clear_reports ?? req.body?.clearReports);
+            const authUser = req.auth.user;
+            const chatMessage = await ChatMessage.findOne({ id: messageId });
+            if (!chatMessage) return res.status(404).json({ success: false, message: "Chat message not found" });
+            const metadata = ensureMetadataObject(chatMessage);
+            const now = new Date().toISOString();
+            const actionMap = {
+                review: "review", restrict: "restricted", restricted: "restricted",
+                block: "blocked", blocked: "blocked", clear: "", restore: "", approve: "",
+            };
+            if (!Object.prototype.hasOwnProperty.call(actionMap, action)) {
+                return res.status(400).json({ success: false, message: "Invalid moderation action" });
+            }
+            const nextStatus = actionMap[action];
+            if (nextStatus) metadata.moderation_status = nextStatus;
+            else delete metadata.moderation_status;
+
+            if (action === "block" || action === "blocked") {
+                chatMessage.deleted_at = now;
+            } else if (action === "clear" || action === "restore" || action === "approve") {
+                chatMessage.deleted_at = null;
+            }
+
+            if (clearReports || action === "clear" || action === "approve" || action === "restore") {
+                await markReportsForTarget({
+                    targetType: "chat_message",
+                    targetId: messageId,
+                    authUser,
+                    status: "resolved",
+                });
+            } else if (["review", "restrict", "restricted", "block", "blocked"].includes(action)) {
+                await markReportsForTarget({
+                    targetType: "chat_message",
+                    targetId: messageId,
+                    authUser,
+                    status: "under_review",
+                });
+            }
+
+            const actionRecord = await createModerationActionRecord({
+                targetType: "chat_message",
+                targetId: messageId,
+                postId: `chat:${String(chatMessage.conversation_id || "")}`,
+                actionScope: "moderation",
+                action,
+                status: nextStatus || "clear",
+                note,
+                authUser,
+                metadata: {
+                    clear_reports: clearReports,
+                    conversation_id: String(chatMessage.conversation_id || ""),
+                },
+            });
+            const actionHistory = Array.isArray(metadata.moderation_actions) ? [...metadata.moderation_actions] : [];
+            actionHistory.push({
+                id: actionRecord.id,
+                action,
+                status: nextStatus || "clear",
+                note,
+                actor_user_id: String(authUser.id || ""),
+                actor_name: getAuthDisplayName(authUser, "Admin"),
+                created_at: now,
+            });
+            metadata.moderation_actions = actionHistory.slice(-50);
+            metadata.moderation_updated_at = now;
+            metadata.moderation_updated_by = String(authUser.id || "");
+            metadata.moderation_updated_by_name = getAuthDisplayName(authUser, "Admin");
+
+            await syncChatMessageReportSummary(chatMessage);
+            await chatMessage.save();
+            const conversation = await ChatConversation.findOne({
+                id: String(chatMessage.conversation_id || ""),
+            });
+            return res.json({
+                success: true,
+                message: "Chat message moderation updated",
+                chat_message: serializeChatMessageModeration(chatMessage, conversation),
+                action: serializeModerationAction(actionRecord),
+            });
+        } catch (error) {
+            console.error("Error updating chat message moderation:", error);
+            return res.status(500).json({ success: false, message: "Failed to update chat moderation" });
+        }
+    });
+
     router.patch("/admin/posts/:id/feature", ...requireStreamFeature, async (req, res) => {
         try {
             const postId = String(req.params.id || "");
