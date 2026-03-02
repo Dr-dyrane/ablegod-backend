@@ -20,6 +20,7 @@ const blogPostSchema = new mongoose.Schema({
 		},
 	],
 	image: String,
+	videoUrl: String,
 	author: String,
 	status: String,
 	likes: { type: Number, default: 0 },
