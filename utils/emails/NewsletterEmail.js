@@ -1,5 +1,3 @@
-// utils/emails/NewsletterEmail.js
-
 const {
 	Html,
 	Head,
@@ -15,19 +13,29 @@ const {
 const { render } = require("@react-email/render");
 const React = require("react");
 
-const NewsletterEmail = ({
+const BRAND = {
+	bg: "#F3F5FB",
+	card: "#FFFFFF",
+	ink: "#111827",
+	muted: "#6B7280",
+	primary: "#111827",
+};
+
+function NewsletterEmail({
 	title,
 	excerpt,
 	postUrl,
 	imageUrl,
 	logoUrl,
 	unsubscribeLink,
-}) => {
+}) {
+	const safeTitle = String(title || "New update from AbleGod Stream");
+	const safeExcerpt = String(excerpt || "A new story is now available.");
 	return React.createElement(
 		Html,
 		null,
 		React.createElement(Head, null),
-		React.createElement(Preview, null, `New Blog Post: ${title}`),
+		React.createElement(Preview, null, safeTitle),
 		React.createElement(
 			Body,
 			{ style: styles.body },
@@ -37,93 +45,134 @@ const NewsletterEmail = ({
 				React.createElement(
 					Section,
 					{ style: styles.header },
-					React.createElement(Img, {
-						src: logoUrl,
-						alt: "ableGod Logo",
-						width: "150",
-						style: styles.logo,
+					logoUrl
+						? React.createElement(Img, {
+							src: logoUrl,
+							alt: "AbleGod",
+							width: "58",
+							height: "58",
+							style: styles.logo,
+						})
+						: null,
+					React.createElement(Text, { style: styles.eyebrow }, "ABLEGOD STREAM"),
+					React.createElement(Heading, { style: styles.heading }, safeTitle)
+				),
+				imageUrl
+					? React.createElement(Img, {
+						src: imageUrl,
+						alt: safeTitle,
+						style: styles.heroImage,
 					})
-				),
-				React.createElement(Img, {
-					src: imageUrl,
-					alt: title,
-					style: styles.image,
-				}),
-				React.createElement(Heading, { style: styles.heading }, title),
-				React.createElement(Text, { style: styles.text }, excerpt),
+					: null,
 				React.createElement(
-					Button,
-					{ style: styles.button, href: postUrl },
-					"Read More"
+					Section,
+					{ style: styles.content },
+					React.createElement(Text, { style: styles.excerpt }, safeExcerpt),
+					React.createElement(
+						Button,
+						{ style: styles.primaryButton, href: postUrl || "https://www.chistanwrites.blog/blog" },
+						"Read the Story"
+					)
 				),
 				React.createElement(
-					Text,
+					Section,
 					{ style: styles.footer },
-					"Enjoy reading? Visit more articles at ",
 					React.createElement(
-						"a",
-						{ href: "https://www.chistanwrites.blog/blog", style: styles.link },
-						"ableGod Blog"
+						Text,
+						{ style: styles.footerText },
+						"If this update is no longer relevant, you can unsubscribe at any time."
 					),
-					"."
-				),
-				React.createElement(
-					Text,
-					{ style: styles.unsubscribe },
-					"If you no longer wish to receive these emails, ",
 					React.createElement(
-						"a",
-						{ href: unsubscribeLink, style: styles.link },
-						"unsubscribe here"
-					),
-					"."
+						Button,
+						{ style: styles.linkButton, href: unsubscribeLink || "#" },
+						"Unsubscribe"
+					)
 				)
 			)
 		)
 	);
-};
+}
 
 const styles = {
 	body: {
-		backgroundColor: "#F5F5F5",
-		padding: "20px",
-		fontFamily: "Arial, sans-serif",
+		backgroundColor: BRAND.bg,
+		padding: "24px 12px",
+		fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+		color: BRAND.ink,
 	},
 	container: {
-		backgroundColor: "#ffffff",
+		maxWidth: "640px",
+		backgroundColor: BRAND.card,
 		padding: "24px",
+		borderRadius: "24px",
+		border: "1px solid rgba(17, 24, 39, 0.08)",
+	},
+	header: {
+		paddingBottom: "8px",
+	},
+	logo: {
+		display: "block",
+		marginBottom: "12px",
 		borderRadius: "12px",
-		textAlign: "center",
-		boxShadow: "0px 4px 10px rgba(0, 0, 0, 0.05)",
 	},
-	header: { marginBottom: "20px" },
-	logo: { display: "block", margin: "0 auto" },
-	image: { width: "100%", height: "auto", borderRadius: "8px" },
+	eyebrow: {
+		margin: "0 0 8px",
+		fontSize: "11px",
+		letterSpacing: "0.24em",
+		textTransform: "uppercase",
+		color: BRAND.muted,
+		fontWeight: "700",
+	},
 	heading: {
-		color: "#4A154B",
-		fontSize: "24px",
-		fontWeight: "bold",
-		margin: "20px 0 10px",
+		margin: "0 0 14px",
+		fontSize: "28px",
+		lineHeight: "1.25",
+		fontWeight: "800",
+		color: BRAND.ink,
 	},
-	text: {
-		color: "#333",
-		fontSize: "16px",
-		lineHeight: "1.6",
-		marginBottom: "20px",
+	heroImage: {
+		width: "100%",
+		height: "auto",
+		borderRadius: "16px",
+		marginBottom: "16px",
+		border: "1px solid rgba(17,24,39,0.08)",
 	},
-	button: {
-		backgroundColor: "#4A154B",
-		color: "#FFFFFF",
-		padding: "12px 24px",
-		borderRadius: "8px",
-		textDecoration: "none",
+	content: {
+		paddingBottom: "4px",
+	},
+	excerpt: {
+		margin: "0 0 16px",
+		fontSize: "15px",
+		lineHeight: "1.7",
+		color: "#374151",
+	},
+	primaryButton: {
 		display: "inline-block",
-		fontWeight: "bold",
-		cursor: "pointer",
+		backgroundColor: BRAND.primary,
+		color: "#FFFFFF",
+		textDecoration: "none",
+		padding: "11px 16px",
+		borderRadius: "11px",
+		fontWeight: "700",
+		fontSize: "13px",
 	},
-	footer: { marginTop: "30px", fontSize: "14px", color: "#777" },
-	unsubscribe: { fontSize: "12px", color: "#999", marginTop: "10px" },
-	link: { color: "#4A154B", textDecoration: "none", fontWeight: "bold" },
+	footer: {
+		paddingTop: "16px",
+	},
+	footerText: {
+		margin: "0 0 10px",
+		fontSize: "12px",
+		lineHeight: "1.6",
+		color: BRAND.muted,
+	},
+	linkButton: {
+		display: "inline-block",
+		fontSize: "12px",
+		color: "#475569",
+		textDecoration: "none",
+		fontWeight: "700",
+		padding: "0",
+	},
 };
 
 module.exports = (props) => render(React.createElement(NewsletterEmail, props));

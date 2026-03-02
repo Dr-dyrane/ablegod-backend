@@ -21,6 +21,39 @@ const isStreamPostPayload = (payload = {}) => {
 	}
 };
 
+async function dispatchNewsletterToSubscribers({
+	subscribers,
+	title,
+	excerpt,
+	postUrl,
+	image,
+	req,
+}) {
+	if (!Array.isArray(subscribers) || subscribers.length === 0) {
+		return { delivered: 0, failed: 0 };
+	}
+
+	const sendResults = await Promise.allSettled(
+		subscribers.map((subscriber) =>
+			sendNewsletterEmail(
+				subscriber.email,
+				title,
+				excerpt,
+				postUrl,
+				image,
+				req
+			)
+		)
+	);
+
+	const delivered = sendResults.filter((result) => result.status === "fulfilled").length;
+	const failed = sendResults.length - delivered;
+	if (failed > 0) {
+		console.warn(`[newsletter] Delivery failures detected: ${failed}/${sendResults.length}`);
+	}
+	return { delivered, failed };
+}
+
 // Routes
 router.get("/", async (req, res) => {
 	try {
@@ -57,16 +90,14 @@ router.post("/", ...requireAdminOrAuthor, async (req, res) => {
 			// ✅ Get all subscriber emails from your database
 			const subscribers = await Subscriber.find({ status: "active" });
 
-			// ✅ Send the newsletter email to each subscriber
-			subscribers.forEach((subscriber) => {
-				sendNewsletterEmail(
-					subscriber.email,
-					title,
-					excerpt,
-					postUrl,
-					image,
-					req
-				);
+			// ✅ Send newsletter and capture partial failures without crashing post creation
+			await dispatchNewsletterToSubscribers({
+				subscribers,
+				title,
+				excerpt,
+				postUrl,
+				image,
+				req,
 			});
 		}
 
@@ -119,15 +150,13 @@ router.put("/:id", ...requireAdminOrAuthor, async (req, res) => {
 
 			const subscribers = await Subscriber.find({ status: "active" });
 
-			subscribers.forEach((subscriber) => {
-				sendNewsletterEmail(
-					subscriber.email,
-					title,
-					excerpt,
-					postUrl,
-					image,
-					req
-				);
+			await dispatchNewsletterToSubscribers({
+				subscribers,
+				title,
+				excerpt,
+				postUrl,
+				image,
+				req,
 			});
 		}
 

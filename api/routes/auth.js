@@ -10,6 +10,12 @@ const User = require("../models/user");
 const RefreshToken = require("../models/refreshToken");
 const { sendEmail } = require("../../utils/mailer");
 const {
+	renderBrandHtmlEmail,
+	escapeHtml,
+	resolveBrandHomeUrl,
+	resolveBrandLogoUrl,
+} = require("../../utils/emails/brandEmailLayout");
+const {
 	authenticate,
 	authenticateOptional,
 	getJwtSecret,
@@ -161,28 +167,23 @@ function buildPasswordResetEmailHtml({ resetUrl, user }) {
 		[user?.first_name, user?.last_name].filter(Boolean).join(" ").trim() ||
 		user?.username ||
 		"Friend";
+	const safeDisplayName = escapeHtml(displayName);
+	const safeResetUrl = escapeHtml(resetUrl);
 
-	return `
-		<div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 560px; margin: 0 auto; color: #111827;">
-			<div style="padding: 24px; border-radius: 20px; background: #ffffff; border: 1px solid rgba(17,24,39,0.08);">
-				<p style="margin:0 0 8px; font-size:12px; letter-spacing:0.22em; text-transform:uppercase; color:#6b7280;">AbleGod Stream</p>
-				<h1 style="margin:0 0 12px; font-size:24px; line-height:1.2;">Reset your password</h1>
-				<p style="margin:0 0 16px; color:#374151; line-height:1.5;">
-					Hello ${displayName}, we received a request to reset your password.
-				</p>
-				<p style="margin:0 0 20px; color:#374151; line-height:1.5;">
-					Use the secure link below to set a new password. This link expires in 1 hour.
-				</p>
-				<p style="margin:0 0 22px;">
-					<a href="${resetUrl}" style="display:inline-block; background:#111827; color:#ffffff; text-decoration:none; padding:12px 16px; border-radius:12px; font-weight:600;">
-						Reset Password
-					</a>
-				</p>
-				<p style="margin:0 0 8px; color:#6b7280; font-size:12px;">If the button does not work, copy this link:</p>
-				<p style="margin:0; color:#6b7280; font-size:12px; word-break:break-all;">${resetUrl}</p>
-			</div>
-		</div>
-	`;
+	return renderBrandHtmlEmail({
+		previewText: "Reset your AbleGod password securely",
+		title: "Reset your password",
+		logoUrl: resolveBrandLogoUrl(),
+		bodyHtml: `
+			<p style="margin:0 0 12px;">Hello ${safeDisplayName}, we received a request to reset your password.</p>
+			<p style="margin:0 0 14px;">This secure link expires in 1 hour. If you did not request this, you can ignore this email.</p>
+			<p style="margin:0;">If the button does not work, copy this link:</p>
+			<p style="margin:8px 0 0;word-break:break-all;color:#64748B;font-size:12px;">${safeResetUrl}</p>
+		`,
+		ctaLabel: "Reset Password",
+		ctaUrl: resetUrl,
+		footerHtml: `Need help? Visit <a href="${escapeHtml(resolveBrandHomeUrl())}" style="color:#334155;text-decoration:none;font-weight:700;">AbleGod Stream</a>.`,
+	});
 }
 
 async function comparePasswordAndMigrateIfNeeded(user, inputPassword) {

@@ -293,7 +293,7 @@ if (!process.env.MONGODB_URI && !process.env.MONGODB_URI_FALLBACK && !process.en
 }
 
 app.use("/api", async (req, res, next) => {
-	if (req.path === "/debug" || req.path === "/pusher/test") {
+	if (req.path.startsWith("/debug") || req.path === "/pusher/test") {
 		return next();
 	}
 
@@ -537,6 +537,7 @@ const createChatRoutes = require("./routes/chat");
 const createStreamRoutes = require("./routes/stream");
 
 const mediaRoutes = require("./routes/media");
+const emailPreviewRoutes = require("./routes/emailPreview");
 
 const ChatConversation = require("./models/chatConversation");
 
@@ -573,6 +574,7 @@ app.use("/api/stream", createStreamRoutes(realtimeDispatcher));
 app.use("/api/media", mediaRoutes);
 
 app.use("/api/ai", require("./routes/ai"));
+app.use("/api/debug/email-preview", emailPreviewRoutes);
 
 
 

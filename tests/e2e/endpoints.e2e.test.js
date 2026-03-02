@@ -477,6 +477,27 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.ok(memberToken);
   });
 
+  await t.test("email preview debug endpoints render HTML templates", async () => {
+    const indexRes = await request(app).get("/api/debug/email-preview");
+    assert.equal(indexRes.status, 200);
+    assert.equal(indexRes.body.success, true);
+    assert.ok(indexRes.body.endpoints?.welcome);
+
+    const welcomePreviewRes = await request(app)
+      .get("/api/debug/email-preview/welcome")
+      .query({ name: "Preview User" });
+    assert.equal(welcomePreviewRes.status, 200);
+    assert.match(String(welcomePreviewRes.headers["content-type"] || ""), /text\/html/);
+    assert.ok(String(welcomePreviewRes.text || "").includes("Preview User"));
+
+    const newsletterPreviewRes = await request(app)
+      .get("/api/debug/email-preview/newsletter")
+      .query({ title: "Preview Newsletter" });
+    assert.equal(newsletterPreviewRes.status, 200);
+    assert.match(String(newsletterPreviewRes.headers["content-type"] || ""), /text\/html/);
+    assert.ok(String(newsletterPreviewRes.text || "").includes("Preview Newsletter"));
+  });
+
   await t.test("subscriber endpoints: create + campaign + invite", async () => {
     const createSubscriberRes = await request(app).post("/api/subscribers").send({
       id: 9001,

@@ -1,15 +1,31 @@
 const nodemailer = require("nodemailer");
 const WelcomeEmail = require("./emails/WelcomeEmail");
 const NewsletterEmail = require("./emails/NewsletterEmail"); // ✅ Import NewsletterEmail
+const { resolveBrandLogoUrl, resolveBrandHomeUrl } = require("./emails/brandEmailLayout");
 require("dotenv").config();
 
-const transporter = nodemailer.createTransport({
-	service: "gmail",
-	auth: {
-		user: process.env.GMAIL_USER,
-		pass: process.env.GMAIL_APP_PASSWORD,
-	},
-});
+let transporter = null;
+
+function getSmtpConfig() {
+	return {
+		user: String(process.env.GMAIL_USER || "").trim(),
+		pass: String(process.env.GMAIL_APP_PASSWORD || "").trim(),
+	};
+}
+
+function getTransporter() {
+	const { user, pass } = getSmtpConfig();
+	if (!user || !pass) {
+		throw new Error("SMTP not configured. Missing GMAIL_USER or GMAIL_APP_PASSWORD.");
+	}
+	if (!transporter) {
+		transporter = nodemailer.createTransport({
+			service: "gmail",
+			auth: { user, pass },
+		});
+	}
+	return transporter;
+}
 
 /**
  * Send an email
@@ -18,16 +34,30 @@ const transporter = nodemailer.createTransport({
  * @param {string} html - Email body (HTML format)
  */
 const sendEmail = async (to, subject, html) => {
+	const target = String(to || "").trim().toLowerCase();
+	if (!target) {
+		throw new Error("Email recipient is required.");
+	}
+
+	const { user, pass } = getSmtpConfig();
+	if ((!user || !pass) && process.env.NODE_ENV === "test") {
+		console.warn(`[mailer] Skipping email in test mode (SMTP not configured): ${target}`);
+		return { skipped: true, to: target };
+	}
+
 	try {
-		await transporter.sendMail({
-			from: `"ableGod." <${process.env.GMAIL_USER}>`,
-			to,
+		const activeTransporter = getTransporter();
+		const info = await activeTransporter.sendMail({
+			from: `"AbleGod Stream" <${user}>`,
+			to: target,
 			subject,
 			html,
 		});
-		console.log(`✅ Email sent to ${to}`);
+		console.log(`✅ Email sent to ${target}`);
+		return info;
 	} catch (error) {
-		console.error(`❌ Error sending email to ${to}:`, error);
+		console.error(`❌ Error sending email to ${target}:`, error);
+		throw error;
 	}
 };
 
@@ -39,15 +69,14 @@ const sendEmail = async (to, subject, html) => {
  * @param {object} req - Express request object
  */
 const sendWelcomeEmail = async (email, name, id, req) => {
-	try {
-		const unsubscribeLink = `${req.protocol}://${req.get("host")}/api/subscribers/${id}?status=inactive`;
-
-		const emailHtml = await WelcomeEmail({ name, unsubscribeLink });
-
-		await sendEmail(email, "Welcome to Our Newsletter!", emailHtml);
-	} catch (error) {
-		console.error("❌ Error in sendWelcomeEmail:", error.message, error.stack);
-	}
+	const unsubscribeLink = `${req.protocol}://${req.get("host")}/api/subscribers/${id}?status=inactive`;
+	const emailHtml = await WelcomeEmail({
+		name,
+		unsubscribeLink,
+		logoUrl: resolveBrandLogoUrl(),
+		streamUrl: resolveBrandHomeUrl(),
+	});
+	return sendEmail(email, "Welcome to AbleGod Stream", emailHtml);
 };
 
 /**
@@ -67,37 +96,28 @@ const sendNewsletterEmail = async (
 	image,
 	req
 ) => {
-	try {
-		// ✅ Generate the logo URL dynamically
-		const logoUrl =
-			"https://res.cloudinary.com/dwvnnoxyd/image/upload/v1736610058/icon-192x192_ggvuae.png";
+	// ✅ Generate the logo URL dynamically
+	const logoUrl = resolveBrandLogoUrl();
 
-		// ✅ Generate the unsubscribe link
-		const unsubscribeLink = `${req.protocol}://${req.get("host")}/unsubscribe?email=${email}`;
+	// ✅ Generate the unsubscribe link
+	const unsubscribeLink = `${req.protocol}://${req.get("host")}/unsubscribe?email=${email}`;
 
-		const imageUrl =
-			image ||
-			"https://res.cloudinary.com/dwvnnoxyd/image/upload/v1736610058/icon-192x192_ggvuae.png";
+	const imageUrl =
+		image ||
+		logoUrl;
 
-		// ✅ Render the newsletter email
-		const emailHtml = await NewsletterEmail({
-			title,
-			excerpt,
-			postUrl,
-			imageUrl,
-			logoUrl,
-			unsubscribeLink,
-		});
+	// ✅ Render the newsletter email
+	const emailHtml = await NewsletterEmail({
+		title,
+		excerpt,
+		postUrl,
+		imageUrl,
+		logoUrl,
+		unsubscribeLink,
+	});
 
-		// ✅ Send the email
-		await sendEmail(email, `📢 New Blog Post: ${title}`, emailHtml);
-	} catch (error) {
-		console.error(
-			"❌ Error in sendNewsletterEmail:",
-			error.message,
-			error.stack
-		);
-	}
+	// ✅ Send the email
+	return sendEmail(email, `New Blog Post: ${title}`, emailHtml);
 };
 
 module.exports = { sendEmail, sendWelcomeEmail, sendNewsletterEmail };

@@ -6,14 +6,12 @@ const Subscriber = require("../models/subscriber");
 const { sendWelcomeEmail, sendEmail } = require("../../utils/mailer");
 const { requireAdminOrAuthor } = require("../middleware/auth");
 const { v4: uuidv4 } = require("uuid");
-
-const escapeHtml = (value = "") =>
-	String(value)
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&#039;");
+const {
+	renderBrandHtmlEmail,
+	escapeHtml,
+	resolveBrandLogoUrl,
+	resolveBrandHomeUrl,
+} = require("../../utils/emails/brandEmailLayout");
 
 async function resolveNextSubscriberId() {
 	const latest = await Subscriber.findOne().sort({ id: -1 }).lean();
@@ -27,30 +25,18 @@ function buildPlatformUpdateEmailHtml({
 	ctaUrl,
 	unsubscribeUrl,
 }) {
-	const safeHeadline = escapeHtml(headline || "AbleGod Platform Update");
 	const safeBody = escapeHtml(body || "We have shipped an update for your community.");
-	const safeCtaLabel = escapeHtml(ctaLabel || "Open AbleGod");
-	const safeCtaUrl = escapeHtml(ctaUrl || "https://www.chistanwrites.blog");
 	const safeUnsubscribeUrl = escapeHtml(unsubscribeUrl || "#");
 
-	return `
-		<div style="font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:0 auto;padding:24px;background:#f6f7fb;color:#111827;">
-			<div style="background:#ffffffcc;border-radius:20px;padding:24px;border:1px solid rgba(15,23,42,0.08);backdrop-filter:blur(8px);">
-				<p style="margin:0 0 8px;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#6b7280;">AbleGod Platform</p>
-				<h1 style="margin:0 0 12px;font-size:26px;line-height:1.2;">${safeHeadline}</h1>
-				<p style="margin:0 0 18px;line-height:1.65;color:#374151;white-space:pre-wrap;">${safeBody}</p>
-				<p style="margin:0 0 18px;">
-					<a href="${safeCtaUrl}" style="display:inline-block;background:#111827;color:#fff;text-decoration:none;padding:12px 16px;border-radius:12px;font-weight:600;">
-						${safeCtaLabel}
-					</a>
-				</p>
-				<p style="margin:0;color:#6b7280;font-size:12px;line-height:1.5;">
-					If you no longer want these updates,
-					<a href="${safeUnsubscribeUrl}" style="color:#374151;">unsubscribe here</a>.
-				</p>
-			</div>
-		</div>
-	`;
+	return renderBrandHtmlEmail({
+		previewText: headline || "AbleGod Platform Update",
+		title: headline || "AbleGod Platform Update",
+		logoUrl: resolveBrandLogoUrl(),
+		bodyHtml: `<p style="margin:0;white-space:pre-wrap;">${safeBody}</p>`,
+		ctaLabel: ctaLabel || "Open AbleGod",
+		ctaUrl: ctaUrl || "https://www.chistanwrites.blog",
+		footerHtml: `If you no longer want these updates, <a href="${safeUnsubscribeUrl}" style="color:#334155;text-decoration:none;font-weight:700;">unsubscribe here</a>.`,
+	});
 }
 
 function buildInviteEmailHtml({
@@ -58,25 +44,16 @@ function buildInviteEmailHtml({
 	featureName,
 	inviteUrl,
 }) {
-	const safeName = escapeHtml(name || "Friend");
 	const safeFeature = escapeHtml(featureName || "the new Stream experience");
-	const safeInviteUrl = escapeHtml(inviteUrl || "https://www.chistanwrites.blog/user");
-	return `
-		<div style="font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:0 auto;padding:24px;background:#f6f7fb;color:#111827;">
-			<div style="background:#ffffffcc;border-radius:20px;padding:24px;border:1px solid rgba(15,23,42,0.08);backdrop-filter:blur(8px);">
-				<p style="margin:0 0 8px;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#6b7280;">AbleGod Invite</p>
-				<h1 style="margin:0 0 12px;font-size:24px;line-height:1.2;">${safeName}, you're invited</h1>
-				<p style="margin:0 0 18px;line-height:1.65;color:#374151;">
-					We just launched ${safeFeature}. Tap below to join and experience the new flow.
-				</p>
-				<p style="margin:0;">
-					<a href="${safeInviteUrl}" style="display:inline-block;background:#111827;color:#fff;text-decoration:none;padding:12px 16px;border-radius:12px;font-weight:600;">
-						Open AbleGod
-					</a>
-				</p>
-			</div>
-		</div>
-	`;
+	return renderBrandHtmlEmail({
+		previewText: `You're invited to AbleGod Stream`,
+		title: `${name || "Friend"}, you're invited`,
+		logoUrl: resolveBrandLogoUrl(),
+		bodyHtml: `<p style="margin:0;">We just launched ${safeFeature}. Tap below to join and experience the new flow.</p>`,
+		ctaLabel: "Open AbleGod",
+		ctaUrl: inviteUrl || "https://www.chistanwrites.blog/user",
+		footerHtml: `Explore more at <a href="${escapeHtml(resolveBrandHomeUrl())}" style="color:#334155;text-decoration:none;font-weight:700;">AbleGod Stream</a>.`,
+	});
 }
 
 // Get all subscribers
@@ -97,17 +74,39 @@ router.post("/", async (req, res) => {
 		const newSubscriber = new Subscriber(req.body);
 		const savedSubscriber = await newSubscriber.save();
 
-		/// Send welcome email with a styled template
-		await sendWelcomeEmail(email, name, id, req);
+		const deliveryResults = await Promise.allSettled([
+			sendWelcomeEmail(email, name, id, req),
+			sendEmail(
+				"mcechefu@chistanwrites.com",
+				"New Subscriber Alert",
+				`<h1>New Subscriber</h1><p>${name} (${email}) just subscribed.</p>`
+			),
+		]);
+		const failedDeliveries = deliveryResults
+			.map((result, index) => ({ result, channel: index === 0 ? "welcome" : "admin_alert" }))
+			.filter((entry) => entry.result.status === "rejected")
+			.map((entry) => ({
+				channel: entry.channel,
+				error:
+					entry.result.status === "rejected"
+						? entry.result.reason instanceof Error
+							? entry.result.reason.message
+							: String(entry.result.reason || "email send failed")
+						: "",
+			}));
 
-		// Send admin notification
-		await sendEmail(
-			"mcechefu@chistanwrites.com",
-			"New Subscriber Alert",
-			`<h1>New Subscriber</h1><p>${name} (${email}) just subscribed.</p>`
-		);
+		const payload =
+			typeof savedSubscriber.toObject === "function"
+				? savedSubscriber.toObject()
+				: savedSubscriber;
 
-		res.status(201).json(savedSubscriber);
+		return res.status(201).json({
+			...payload,
+			email_delivery: {
+				success: failedDeliveries.length === 0,
+				failed: failedDeliveries,
+			},
+		});
 	} catch (error) {
 		console.error("Error adding subscriber:", error);
 		res.status(500).json({ error: "Error adding subscriber" });

@@ -56,6 +56,9 @@ MONGODB_URI=your_mongodb_connection_string
 # Email Configuration
 GMAIL_USER=your_gmail_address
 GMAIL_APP_PASSWORD=your_gmail_app_password
+EMAIL_BRAND_LOGO_URL=https://res.cloudinary.com/<cloud>/image/upload/.../logo.png
+EMAIL_BRAND_HOME_URL=https://www.chistanwrites.blog/user
+EMAIL_PREVIEW_KEY=optional_preview_key_for_production
 
 # Google Analytics
 GOOGLE_SERVICE_ACCOUNT_BASE64=your_base64_encoded_service_account_json
@@ -323,6 +326,18 @@ The backend includes an automated email system using Nodemailer and React Email 
 - Located in `utils/emails/`
 - `WelcomeEmail.js` - Welcome email template
 - `NewsletterEmail.js` - Newsletter email template
+- `brandEmailLayout.js` - shared premium branded shell for auth/campaign/invite emails
+
+### Email Preview Routes
+- `GET /api/debug/email-preview`
+- `GET /api/debug/email-preview/welcome`
+- `GET /api/debug/email-preview/newsletter`
+- `GET /api/debug/email-preview/password-reset`
+- `GET /api/debug/email-preview/platform-update`
+- `GET /api/debug/email-preview/invite`
+
+Production protection:
+- Set `EMAIL_PREVIEW_KEY`, then pass `?key=<value>` or `x-email-preview-key` header.
 
 ### Configuration
 - Uses Gmail SMTP
