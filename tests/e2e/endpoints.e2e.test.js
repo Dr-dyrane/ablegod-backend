@@ -72,6 +72,20 @@ async function waitForMongooseConnection(connection, timeoutMs = 10000) {
   });
 }
 
+async function settleWithin(promise, timeoutMs = 5000) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timeoutId = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 test.before(async () => {
   process.env.NODE_ENV = "test";
   process.env.JWT_SECRET = "ablegod-e2e-jwt-secret";
@@ -101,7 +115,23 @@ test.before(async () => {
 test.after(async () => {
   try {
     if (io) {
-      await io.close();
+      await new Promise((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+
+        try {
+          io.close(done);
+        } catch {
+          done();
+          return;
+        }
+
+        setTimeout(done, 1000);
+      });
     }
   } catch {
     // no-op
@@ -118,13 +148,13 @@ test.after(async () => {
   }
 
   try {
-    await (backend.mongoose || mongoose).disconnect();
+    await settleWithin((backend.mongoose || mongoose).disconnect(), 5000);
   } catch {
     // no-op
   }
 
   if (mongoServer) {
-    await mongoServer.stop();
+    await settleWithin(mongoServer.stop(), 5000);
   }
 });
 

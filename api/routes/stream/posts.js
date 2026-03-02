@@ -105,7 +105,7 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
     });
 
     // ─── GET /posts/tags/trending — simple trending tags computation ───
-    router.get("/posts/tags/trending", ...requireFeedRead, async (req, res) => {
+    async function handleTrendingTags(req, res) {
         try {
             const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
             const tagsAgg = await StreamPost.aggregate([
@@ -134,7 +134,10 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
             console.error("Trending tags error", err);
             return res.status(500).json({ success: false, message: "Failed to compute trending tags" });
         }
-    });
+    }
+
+    router.get("/posts/tags/trending", ...requireFeedRead, handleTrendingTags);
+    router.get("/tags/trending", ...requireFeedRead, handleTrendingTags);
 
     // ─── POST /posts — Create post (with AI moderation) ───
     router.post("/posts", ...requirePostCreate, async (req, res) => {

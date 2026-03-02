@@ -2,7 +2,7 @@
 const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema({
-	id: String, // Changed to String to support Supabase UUIDs
+	id: String, // String id supports UUID-based identities.
 	username: String,
 	first_name: String,
 	last_name: String,

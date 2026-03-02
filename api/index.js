@@ -27,6 +27,7 @@ const { Server } = require("socket.io");
 const {
 
 	requireAdminOrAuthor,
+	requireCapabilities,
 
 	resolveAuthContextFromToken,
 
@@ -232,19 +233,56 @@ const io = new Server(server, {
 
 
 
-const pusher = new Pusher({
+const hasPusherConfig = Boolean(
+	process.env.PUSHER_APP_ID &&
+	process.env.PUSHER_KEY &&
+	process.env.PUSHER_SECRET &&
+	process.env.PUSHER_CLUSTER
+);
 
-	appId: process.env.PUSHER_APP_ID,
+const shouldUsePusher =
+	process.env.NODE_ENV !== "test" &&
+	process.env.DISABLE_PUSHER !== "true" &&
+	hasPusherConfig;
 
-	key: process.env.PUSHER_KEY,
+if (!shouldUsePusher && process.env.NODE_ENV !== "test") {
+	const reason =
+		process.env.DISABLE_PUSHER === "true"
+			? "DISABLE_PUSHER=true"
+			: "missing PUSHER_* environment variables";
+	console.log(`[realtime] Pusher disabled (${reason}).`);
+}
 
-	secret: process.env.PUSHER_SECRET,
+const pusher = shouldUsePusher
+	? new Pusher({
+		appId: process.env.PUSHER_APP_ID,
+		key: process.env.PUSHER_KEY,
+		secret: process.env.PUSHER_SECRET,
+		cluster: process.env.PUSHER_CLUSTER,
+		useTLS: true,
+	})
+	: null;
 
-	cluster: process.env.PUSHER_CLUSTER,
+const pusherRequestTimeoutMs = Number(process.env.PUSHER_TIMEOUT_MS || 1500);
 
-	useTLS: true,
+async function triggerPusherWithTimeout(channel, event, payload) {
+	if (!pusher) return;
 
-});
+	let timeoutHandle = null;
+	try {
+		await Promise.race([
+			pusher.trigger(channel, event, payload),
+			new Promise((_, reject) => {
+				timeoutHandle = setTimeout(
+					() => reject(new Error(`Pusher timeout after ${pusherRequestTimeoutMs}ms`)),
+					pusherRequestTimeoutMs
+				);
+			}),
+		]);
+	} finally {
+		if (timeoutHandle) clearTimeout(timeoutHandle);
+	}
+}
 
 
 
@@ -294,7 +332,7 @@ const realtimeDispatcher = {
 
 				const pusherChannel = channel.replace(":", "-");
 
-				await pusher.trigger(pusherChannel, event, payload);
+				await triggerPusherWithTimeout(pusherChannel, event, payload);
 
 			}
 
@@ -939,5 +977,8 @@ if (require.main === module) {
 }
 
 
-
 module.exports = app;
+module.exports.app = app;
+module.exports.server = server;
+module.exports.io = io;
+module.exports.mongoose = mongoose;
