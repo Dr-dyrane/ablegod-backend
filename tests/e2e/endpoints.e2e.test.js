@@ -221,6 +221,59 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.ok(emailLoginRes.body.token);
   });
 
+  await t.test("ai endpoints: settings update + analytics + local validation", async () => {
+    const initialSettingsRes = await request(app)
+      .get("/api/ai/settings")
+      .set(authHeader(adminToken));
+    assert.equal(initialSettingsRes.status, 200);
+    assert.equal(initialSettingsRes.body.success, true);
+    assert.ok(initialSettingsRes.body.settings);
+
+    const updateSettingsRes = await request(app)
+      .put("/api/ai/settings")
+      .set(authHeader(adminToken))
+      .send({
+        openai_key: "",
+        anthropic_key: "",
+        preferred_model: "claude-3-haiku",
+        enable_writing_assistant: true,
+        enable_bible_suggestions: true,
+        enable_content_moderation: true,
+      });
+    assert.equal(updateSettingsRes.status, 200);
+    assert.equal(updateSettingsRes.body.success, true);
+
+    const afterUpdateSettingsRes = await request(app)
+      .get("/api/ai/settings")
+      .set(authHeader(adminToken));
+    assert.equal(afterUpdateSettingsRes.status, 200);
+    assert.equal(afterUpdateSettingsRes.body.success, true);
+    assert.equal(afterUpdateSettingsRes.body.settings.preferred_model, "claude-3-haiku");
+    assert.equal(afterUpdateSettingsRes.body.settings.enable_content_moderation, true);
+
+    const invalidProviderRes = await request(app)
+      .post("/api/ai/test-connection")
+      .set(authHeader(adminToken))
+      .send({ provider: "invalid-provider" });
+    assert.equal(invalidProviderRes.status, 400);
+    assert.equal(invalidProviderRes.body.success, false);
+
+    const missingOpenAiKeyRes = await request(app)
+      .post("/api/ai/test-connection")
+      .set(authHeader(adminToken))
+      .send({ provider: "openai" });
+    assert.equal(missingOpenAiKeyRes.status, 400);
+    assert.equal(missingOpenAiKeyRes.body.success, false);
+
+    const aiAnalyticsRes = await request(app)
+      .get("/api/ai/analytics")
+      .set(authHeader(adminToken));
+    assert.equal(aiAnalyticsRes.status, 200);
+    assert.equal(aiAnalyticsRes.body.success, true);
+    assert.ok(aiAnalyticsRes.body.analytics);
+    assert.ok(aiAnalyticsRes.body.analytics.providers);
+  });
+
   // verify upload endpoint works and enforces admin/author guard
   await t.test("upload endpoint should accept file from admin", async () => {
     const tmpPath = path.join(__dirname, "test-image.png");

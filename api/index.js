@@ -700,7 +700,19 @@ const authenticate = async () => {
 
 
 
-function getDateRange(range) {
+function getDateRange(range, explicitStartDate, explicitEndDate) {
+
+	if (explicitStartDate && explicitEndDate) {
+
+		return {
+
+			startDate: String(explicitStartDate),
+
+			endDate: String(explicitEndDate),
+
+		};
+
+	}
 
 	const endDate = new Date();
 
@@ -783,8 +795,10 @@ app.get("/api/analytics", requireAdminOrAuthor, async (req, res) => {
 	try {
 
 		const range = req.query.range || "7d";
+		const explicitStartDate = req.query.startDate;
+		const explicitEndDate = req.query.endDate;
 
-		const { startDate, endDate } = getDateRange(range);
+		const { startDate, endDate } = getDateRange(range, explicitStartDate, explicitEndDate);
 
 
 

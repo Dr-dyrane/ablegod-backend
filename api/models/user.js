@@ -41,6 +41,9 @@ const userSchema = new mongoose.Schema({
 		openai_key: String,
 		anthropic_key: String,
 		preferred_model: { type: String, default: 'gpt-4o-mini' },
+		enable_writing_assistant: { type: Boolean, default: true },
+		enable_bible_suggestions: { type: Boolean, default: true },
+		enable_content_moderation: { type: Boolean, default: false },
 	},
 });
 
