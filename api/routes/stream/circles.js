@@ -1,6 +1,6 @@
 const { v4: uuidv4 } = require("uuid");
 const {
-    StreamCircle, StreamCircleMember, StreamPost, User,
+    StreamCircle, StreamCircleMember, StreamPost, StreamReport, User,
     Notification,
     serializePost,
     buildViewerReactionMap, buildViewerBookmarkSet, buildViewerRestreamSet,
@@ -169,6 +169,26 @@ async function refreshCircleStats(circleId) {
         member_count: Number(memberCount || 0),
         post_count: Number(postCount || 0),
     };
+}
+
+async function refreshCircleReportSummary(circleId) {
+    const normalizedCircleId = String(circleId || "");
+    if (!normalizedCircleId) return 0;
+    const pendingCount = await StreamReport.countDocuments({
+        target_type: "circle",
+        target_id: normalizedCircleId,
+        status: { $in: ["open", "under_review"] },
+    });
+    await StreamCircle.updateOne(
+        { id: normalizedCircleId },
+        {
+            $set: {
+                "metadata.report_count": Number(pendingCount || 0),
+                updated_at: toIsoNow(),
+            },
+        }
+    );
+    return Number(pendingCount || 0);
 }
 
 function mountCircleRoutes(
@@ -406,6 +426,85 @@ function mountCircleRoutes(
         } catch (error) {
             console.error("Error updating stream circle:", error);
             return res.status(500).json({ success: false, message: "Failed to update circle" });
+        }
+    });
+
+    // POST /circles/:identifier/report
+    router.post("/circles/:identifier/report", ...requireFollowWrite, async (req, res) => {
+        try {
+            const authUser = req.auth.user;
+            const authUserId = String(authUser.id || "");
+            const circle = await resolveCircleByIdentifier(req.params.identifier);
+            if (!circle) return res.status(404).json({ success: false, message: "Circle not found" });
+
+            const membership = await getActiveMembership(circle.id, authUserId);
+            if (!canAccessCircle({ circle, membership, authUser })) {
+                return res.status(403).json({ success: false, message: "You do not have access to this circle" });
+            }
+
+            const reason = String(req.body?.reason || "other").trim().slice(0, 80) || "other";
+            const note = String(req.body?.note || "").trim().slice(0, 500);
+            const now = toIsoNow();
+
+            const existing = await StreamReport.findOne({
+                target_type: "circle",
+                target_id: String(circle.id),
+                reporter_user_id: authUserId,
+                status: { $in: ["open", "under_review"] },
+            }).sort({ updated_at: -1, created_at: -1 });
+
+            let report;
+            if (existing) {
+                existing.reason = reason;
+                existing.note = note;
+                existing.status = "open";
+                existing.updated_at = now;
+                report = await existing.save();
+            } else {
+                report = await new StreamReport({
+                    id: uuidv4(),
+                    target_type: "circle",
+                    target_id: String(circle.id),
+                    post_id: "",
+                    reply_id: null,
+                    reported_user_id: String(circle.owner_user_id || ""),
+                    reporter_user_id: authUserId,
+                    reporter_name: getAuthDisplayName(authUser, "Member"),
+                    reason,
+                    note,
+                    status: "open",
+                    resolved_by_user_id: null,
+                    resolved_by_name: null,
+                    resolved_at: null,
+                    metadata: {
+                        circle_name: String(circle.name || ""),
+                        circle_slug: String(circle.slug || ""),
+                    },
+                    created_at: now,
+                    updated_at: now,
+                }).save();
+            }
+
+            const reportCount = await refreshCircleReportSummary(circle.id);
+            return res.status(201).json({
+                success: true,
+                message: "Circle report submitted",
+                circle: serializeCircle(circle, membership),
+                report: {
+                    id: String(report.id || ""),
+                    target_type: String(report.target_type || "circle"),
+                    target_id: String(report.target_id || ""),
+                    reason: String(report.reason || "other"),
+                    note: String(report.note || ""),
+                    status: String(report.status || "open"),
+                    created_at: report.created_at,
+                    updated_at: report.updated_at,
+                },
+                report_count: reportCount,
+            });
+        } catch (error) {
+            console.error("Error reporting stream circle:", error);
+            return res.status(500).json({ success: false, message: "Failed to report circle" });
         }
     });
 
@@ -866,7 +965,7 @@ function mountCircleRoutes(
             const circles = await StreamCircle.find({}).sort({ updated_at: -1 }).limit(limit);
             const circleIds = circles.map((circle) => String(circle.id || "")).filter(Boolean);
 
-            const [memberCounts, postStats] = await Promise.all([
+            const [memberCounts, postStats, circleReports] = await Promise.all([
                 StreamCircleMember.aggregate([
                     { $match: { circle_id: { $in: circleIds }, status: "active" } },
                     { $group: { _id: "$circle_id", member_count: { $sum: 1 } } },
@@ -892,10 +991,26 @@ function mountCircleRoutes(
                         },
                     },
                 ]),
+                StreamReport.aggregate([
+                    {
+                        $match: {
+                            target_type: "circle",
+                            target_id: { $in: circleIds },
+                            status: { $in: ["open", "under_review"] },
+                        },
+                    },
+                    {
+                        $group: {
+                            _id: "$target_id",
+                            pending_reports: { $sum: 1 },
+                        },
+                    },
+                ]),
             ]);
 
             const memberCountMap = new Map(memberCounts.map((entry) => [String(entry._id || ""), Number(entry.member_count || 0)]));
             const postStatMap = new Map(postStats.map((entry) => [String(entry._id || ""), entry]));
+            const circleReportMap = new Map(circleReports.map((entry) => [String(entry._id || ""), Number(entry.pending_reports || 0)]));
 
             const payload = circles.map((circle) => {
                 const id = String(circle.id || "");
@@ -906,7 +1021,7 @@ function mountCircleRoutes(
                     member_count: Number(memberCountMap.get(id) ?? circle.member_count ?? 0),
                     post_count: Number(stat?.post_count ?? circle.post_count ?? 0),
                     published_post_count: Number(stat?.published_post_count || 0),
-                    pending_reports: Number(stat?.pending_reports || 0),
+                    pending_reports: Number(stat?.pending_reports || 0) + Number(circleReportMap.get(id) || 0),
                     is_featured: Boolean(metadata.is_featured || metadata.featured),
                     editorial_boost: Number(metadata.editorial_boost || 0),
                 };

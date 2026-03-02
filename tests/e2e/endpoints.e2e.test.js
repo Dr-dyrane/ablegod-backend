@@ -857,6 +857,17 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
       )
     );
 
+    const reportCircleRes = await request(app)
+      .post(`/api/stream/circles/${encodeURIComponent(String(createdStreamCircle.id))}/report`)
+      .set(authHeader(peerToken))
+      .send({
+        reason: "safety",
+        note: "Report flow e2e validation for circle moderation queue",
+      });
+    assert.equal(reportCircleRes.status, 201);
+    assert.equal(reportCircleRes.body.success, true);
+    assert.ok(Number(reportCircleRes.body.report_count) >= 1);
+
     const adminCirclesRes = await request(app)
       .get("/api/stream/admin/circles")
       .set(authHeader(adminToken))
@@ -869,6 +880,11 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
           (circle) => String(circle.id) === String(createdStreamCircle.id)
         )
     );
+    const adminCircleEntry = adminCirclesRes.body.circles.find(
+      (circle) => String(circle.id) === String(createdStreamCircle.id)
+    );
+    assert.ok(adminCircleEntry);
+    assert.ok(Number(adminCircleEntry.pending_reports || 0) >= 1);
 
     // static /search pages should load (frontend), ensure server returns 200
     const searchPageRes = await request(app).get("/search");
