@@ -11,6 +11,7 @@
  *   reactions.js   — PUT reaction (post + reply)
  *   engagement.js  — Bookmark, restream, share, view (post + reply)
  *   follows.js     — Follow snapshot, suggestions, toggle follow
+ *   analytics.js   — Creator analytics snapshot for /user workspace
  *   admin.js       — Reports, audit, moderation actions, feature toggle
  */
 
@@ -67,6 +68,7 @@ function createStreamRoutes(pusher) {
     require("./engagement")(router, ctx);
     require("./shares")(router, ctx);
     require("./follows")(router, ctx);
+    require("./analytics")(router, ctx);
     require("./circles")(router, ctx);
     require("./admin")(router, ctx);
 

@@ -1020,6 +1020,50 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.equal(unfollowPeerRes.body.following, false);
   });
 
+  await t.test("stream creator analytics endpoint returns scoped metrics", async () => {
+    const selfAnalyticsRes = await request(app)
+      .get("/api/stream/analytics/creator")
+      .set(authHeader(memberToken))
+      .query({ window_days: 30 });
+    assert.equal(selfAnalyticsRes.status, 200);
+    assert.equal(selfAnalyticsRes.body.success, true);
+    assert.equal(
+      String(selfAnalyticsRes.body.analytics?.scope_user_id),
+      String(memberUser.id)
+    );
+    assert.ok(
+      Number(selfAnalyticsRes.body.analytics?.totals?.posts || 0) >= 1
+    );
+    assert.ok(
+      Array.isArray(selfAnalyticsRes.body.analytics?.activity_by_day)
+    );
+    assert.equal(
+      Number(selfAnalyticsRes.body.analytics?.window_days),
+      30
+    );
+
+    const adminScopedAnalyticsRes = await request(app)
+      .get("/api/stream/analytics/creator")
+      .set(authHeader(adminToken))
+      .query({ user_id: String(memberUser.id), window_days: 14 });
+    assert.equal(adminScopedAnalyticsRes.status, 200);
+    assert.equal(adminScopedAnalyticsRes.body.success, true);
+    assert.equal(
+      String(adminScopedAnalyticsRes.body.analytics?.scope_user_id),
+      String(memberUser.id)
+    );
+    assert.equal(
+      Number(adminScopedAnalyticsRes.body.analytics?.window_days),
+      14
+    );
+
+    const peerForbiddenScopedRes = await request(app)
+      .get("/api/stream/analytics/creator")
+      .set(authHeader(peerToken))
+      .query({ user_id: String(memberUser.id) });
+    assert.equal(peerForbiddenScopedRes.status, 403);
+  });
+
   await t.test("chat identity key registry + participants search endpoints", async () => {
     const registerMemberKeyRes = await request(app)
       .put("/api/chat/identity-keys/me")
