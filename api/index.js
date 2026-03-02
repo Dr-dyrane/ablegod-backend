@@ -420,6 +420,8 @@ const createChatRoutes = require("./routes/chat");
 
 const createStreamRoutes = require("./routes/stream");
 
+const mediaRoutes = require("./routes/media");
+
 const ChatConversation = require("./models/chatConversation");
 
 
@@ -451,6 +453,8 @@ app.use("/api/notifications", createNotificationRoutes(realtimeDispatcher));
 app.use("/api/chat", createChatRoutes(realtimeDispatcher));
 
 app.use("/api/stream", createStreamRoutes(realtimeDispatcher));
+
+app.use("/api/media", mediaRoutes);
 
 app.use("/api/ai", require("./routes/ai"));
 

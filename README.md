@@ -63,6 +63,13 @@ GA4_PROPERTY_ID=your_ga4_property_id
 
 # Server
 PORT=3001
+
+# Cloudinary (Media Pipeline)
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_cloudinary_api_key
+CLOUDINARY_API_SECRET=your_cloudinary_api_secret
+# Optional shorthand instead of the three vars above:
+# CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
 ```
 
 ## 📡 API Endpoints

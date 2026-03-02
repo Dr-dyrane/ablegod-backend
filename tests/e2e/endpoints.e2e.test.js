@@ -28,6 +28,7 @@ let createdStreamCircle;
 let createdNotification;
 let createdConversation;
 let createdMessage;
+let createdMediaAsset;
 
 function authHeader(token) {
   return { Authorization: `Bearer ${token}` };
@@ -92,6 +93,9 @@ test.before(async () => {
   process.env.JWT_SECRET = "ablegod-e2e-jwt-secret";
   process.env.PORT = "0";
   process.env.UPLOADS_DIR = path.join(__dirname, ".tmp", "uploads");
+  process.env.CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || "dwvnnoxyd";
+  process.env.CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || "test_cloudinary_key";
+  process.env.CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || "test_cloudinary_secret";
 
   const uploadsDir = process.env.UPLOADS_DIR;
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -283,6 +287,65 @@ test("Endpoint E2E suite: auth -> users -> posts -> stream -> notifications -> c
     assert.equal(peerLogin.status, 200);
     peerToken = peerLogin.body.token;
     assert.ok(peerToken);
+  });
+
+  await t.test("media endpoints: sign upload + register asset + list + analytics", async () => {
+    const signRes = await request(app)
+      .post("/api/media/sign-upload")
+      .set(authHeader(memberToken))
+      .send({
+        resource_type: "image",
+        folder: "ablegod/test",
+        tags: ["e2e", "media"],
+        context: { surface: "tests" },
+      });
+    assert.equal(signRes.status, 200);
+    assert.equal(signRes.body.success, true);
+    assert.ok(signRes.body.upload);
+    assert.ok(signRes.body.upload.signature);
+    assert.equal(String(signRes.body.upload.resource_type), "image");
+
+    const registerRes = await request(app)
+      .post("/api/media/assets/register")
+      .set(authHeader(memberToken))
+      .send({
+        asset: {
+          public_id: `ablegod/test/e2e-${Date.now()}`,
+          secure_url: "https://res.cloudinary.com/dwvnnoxyd/image/upload/v1/ablegod/test/e2e.png",
+          resource_type: "image",
+          bytes: 1024,
+          width: 1200,
+          height: 630,
+          format: "png",
+          tags: ["e2e", "media"],
+          context: { source: "tests" },
+        },
+      });
+    assert.equal(registerRes.status, 201);
+    assert.equal(registerRes.body.success, true);
+    assert.ok(registerRes.body.asset?.id);
+    createdMediaAsset = registerRes.body.asset;
+
+    const listRes = await request(app)
+      .get("/api/media/assets/me")
+      .set(authHeader(memberToken))
+      .query({ limit: 20 });
+    assert.equal(listRes.status, 200);
+    assert.equal(listRes.body.success, true);
+    assert.ok(Array.isArray(listRes.body.assets));
+    assert.ok(
+      listRes.body.assets.some(
+        (asset) => String(asset.public_id) === String(createdMediaAsset.public_id)
+      )
+    );
+
+    const analyticsRes = await request(app)
+      .get("/api/media/assets/analytics")
+      .set(authHeader(adminToken))
+      .query({ user_id: String(memberUser.id) });
+    assert.equal(analyticsRes.status, 200);
+    assert.equal(analyticsRes.body.success, true);
+    assert.ok(Number(analyticsRes.body.analytics?.total_assets || 0) >= 1);
   });
 
   await t.test("password recovery endpoints: forgot + reset + login with new password", async () => {
