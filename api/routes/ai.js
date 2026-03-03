@@ -297,9 +297,18 @@ router.post("/writing-assistant", authenticate, withAISettings, async (req, res)
         if (req.aiSettings?.enable_writing_assistant === false) {
             return res.status(403).json({ error: "Writing assistant is disabled" });
         }
-        const suggestion = await AIService.generateWritingAssistance(prompt, context, req.aiSettings);
+        const result = await AIService.generateWritingAssistance(prompt, context, req.aiSettings);
+
+        // No keys configured — tell frontend to hide AI features gracefully
+        if (result?.no_provider) {
+            return res.status(503).json({
+                no_provider: true,
+                error: "No AI provider is configured. Please add an API key in Settings.",
+            });
+        }
+
         res.json({
-            suggestion,
+            suggestion: result.suggestion,
             provider_order: req.aiSettings?.provider_order || resolveProviderOrder(req.aiSettings?.preferred_model),
             preferred_model: req.aiSettings?.preferred_model || DEFAULT_AI_SETTINGS.preferred_model,
         });
@@ -309,34 +318,31 @@ router.post("/writing-assistant", authenticate, withAISettings, async (req, res)
     }
 });
 
-// Generate images (OpenAI DALL-E → uploaded to Cloudinary)
+// Generate images (DALL-E → Pollinations.ai fallback → Cloudinary upload)
 router.post("/image-gen", authenticate, withAISettings, async (req, res) => {
-    // Accept either a raw prompt OR structured content context
     const rawPrompt = String(req.body?.prompt || "").trim();
     const content = String(req.body?.content || "").trim();
     const intent = String(req.body?.intent || "Reflection").trim();
     const title = String(req.body?.title || "").trim();
 
-    // Build a photographic/cinematic scene prompt — no text, no quote cards
     let finalPrompt;
     if (content || title) {
         const scene = (title || content).slice(0, 220);
-        const intentLower = intent.toLowerCase();
+        const intentLow = intent.toLowerCase();
         const mood =
-            intentLower === "prayer" ? "peaceful, reverent, cinematic prayer atmosphere" :
-                intentLower === "testimony" ? "joyful, triumphant, warm light, life transformation" :
-                    intentLower === "reflection" ? "contemplative, tranquil, spiritual depth" :
-                        intentLower === "question" ? "thoughtful, searching, morning light, open horizon" :
-                            intentLower === "encouragement" ? "uplifting, hopeful, golden light, community" :
+            intentLow === "prayer" ? "peaceful, reverent, cinematic prayer atmosphere" :
+                intentLow === "testimony" ? "joyful, triumphant, warm light, life transformation" :
+                    intentLow === "reflection" ? "contemplative, tranquil, spiritual depth" :
+                        intentLow === "question" ? "thoughtful, searching, morning light, open horizon" :
+                            intentLow === "encouragement" ? "uplifting, hopeful, golden light, community" :
                                 "spiritual, serene, cinematic";
         finalPrompt = [
-            `A photorealistic artistic photograph or cinematic painting illustrating the theme: "${scene}".`,
+            `A photorealistic artistic photograph or cinematic painting illustrating: "${scene}".`,
             `Mood: ${mood}.`,
             "Style: professional photography, natural lighting, rich colours, faith atmosphere.",
             "No text, no words, no captions, no banners, no overlays.",
         ].join(" ");
     } else if (rawPrompt) {
-        // Strip any prompt that already contains quote/banner language
         const sanitised = rawPrompt
             .replace(/quote\s*card|banner|text\s*overlay|overlay/gi, "scene")
             .slice(0, 400);
@@ -346,57 +352,83 @@ router.post("/image-gen", authenticate, withAISettings, async (req, res) => {
     }
 
     try {
-        // Step 1: Generate image URL from DALL-E (or SVG fallback)
-        const rawResult = await AIService.generateImage(finalPrompt, req.aiSettings);
+        // generateImage returns { url?, buffer?, contentType?, source, is_temporary }
+        const genResult = await AIService.generateImage(finalPrompt, req.aiSettings);
 
-        // Step 2: If it's a data: URL (SVG fallback), return preview-only — do NOT store as post image
-        if (String(rawResult || "").startsWith("data:")) {
+        // Resolve Cloudinary config
+        const cloudinaryUrlStr = process.env.CLOUDINARY_URL || "";
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME || "";
+        const apiKey = process.env.CLOUDINARY_API_KEY || "";
+        const apiSecret = process.env.CLOUDINARY_API_SECRET || "";
+        const cloudinaryConfigured = !!(cloudinaryUrlStr || (cloudName && apiKey && apiSecret));
+
+        if (cloudinaryConfigured) {
+            if (cloudinaryUrlStr) cloudinary.config({ cloudinary_url: cloudinaryUrlStr });
+            else cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret, secure: true });
+        }
+
+        // No Cloudinary — return raw URL if available
+        if (!cloudinaryConfigured) {
+            if (genResult.url) {
+                return res.json({
+                    image_url: genResult.url,
+                    cloudinary_url: null,
+                    source: genResult.source,
+                    is_temporary: true,
+                    message: "Cloudinary not configured — image URL may expire.",
+                });
+            }
             return res.json({
-                image_url: null,           // never embed data: URLs in posts
-                fallback_preview: rawResult, // for in-composer preview only
+                image_url: null,
                 is_fallback: true,
-                message: "AI image provider unavailable. Preview shown but not attached to post.",
+                message: "Image generation failed: no storage configured.",
             });
         }
 
-        // Step 3: Upload the DALL-E URL to Cloudinary so we own the permanent URL
         let cloudinaryUrl = null;
         try {
-            const cloudinaryUrlStr = process.env.CLOUDINARY_URL || "";
-            const cloudName = process.env.CLOUDINARY_CLOUD_NAME || "";
-            const apiKey = process.env.CLOUDINARY_API_KEY || "";
-            const apiSecret = process.env.CLOUDINARY_API_SECRET || "";
-            const isConfigured = !!(cloudinaryUrlStr || (cloudName && apiKey && apiSecret));
-
-            if (isConfigured) {
-                if (cloudinaryUrlStr) {
-                    cloudinary.config({ cloudinary_url: cloudinaryUrlStr });
-                } else {
-                    cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret, secure: true });
-                }
-                const uploadResult = await cloudinary.uploader.upload(rawResult, {
+            if (genResult.buffer) {
+                // Pollinations returned raw bytes — stream upload to Cloudinary
+                const uploadResult = await new Promise((resolve, reject) => {
+                    const uploadStream = cloudinary.uploader.upload_stream(
+                        { folder: "ablegod/ai-generated", resource_type: "image", timeout: 30000, format: "jpg" },
+                        (err, result) => { if (err) reject(err); else resolve(result); }
+                    );
+                    const { Readable } = require("stream");
+                    const readable = new Readable();
+                    readable.push(genResult.buffer);
+                    readable.push(null);
+                    readable.pipe(uploadStream);
+                });
+                cloudinaryUrl = uploadResult?.secure_url || null;
+            } else if (genResult.url) {
+                // DALL-E URL — fetch-and-reupload to Cloudinary for permanence
+                const uploadResult = await cloudinary.uploader.upload(genResult.url, {
                     folder: "ablegod/ai-generated",
                     resource_type: "image",
                     overwrite: false,
-                    timeout: 25000,
+                    timeout: 30000,
                 });
                 cloudinaryUrl = uploadResult?.secure_url || null;
             }
         } catch (uploadErr) {
             console.error("Cloudinary upload of AI image failed:", uploadErr?.message || uploadErr);
-            // Return DALL-E URL as fallback if Cloudinary fails — better than nothing
-            // Frontend will show it but warn the user it may expire
-            return res.json({
-                image_url: rawResult,
-                cloudinary_url: null,
-                is_temporary: true,
-                message: "Image generated but could not be permanently stored. URL may expire.",
-            });
+            if (genResult.url) {
+                return res.json({
+                    image_url: genResult.url,
+                    cloudinary_url: null,
+                    source: genResult.source,
+                    is_temporary: true,
+                    message: "Image generated but could not be permanently stored. URL may expire.",
+                });
+            }
+            return res.status(500).json({ error: "Image generation succeeded but Cloudinary upload failed." });
         }
 
         return res.json({
-            image_url: cloudinaryUrl || rawResult,
+            image_url: cloudinaryUrl || genResult.url || null,
             cloudinary_url: cloudinaryUrl,
+            source: genResult.source,
             is_temporary: !cloudinaryUrl,
         });
     } catch (error) {
@@ -404,6 +436,7 @@ router.post("/image-gen", authenticate, withAISettings, async (req, res) => {
         res.status(500).json({ error: error.message || "Failed to generate image." });
     }
 });
+
 
 // Suggest a relevant Bible verse
 router.post("/bible-verse-suggestion", authenticate, withAISettings, async (req, res) => {
@@ -413,8 +446,20 @@ router.post("/bible-verse-suggestion", authenticate, withAISettings, async (req,
         if (req.aiSettings?.enable_bible_suggestions === false) {
             return res.status(403).json({ error: "Bible suggestions are disabled" });
         }
+
         const suggestion = await AIService.suggestBibleVerse(content, req.aiSettings, count);
-        res.json(suggestion);
+
+        // no_provider: true means no keys configured — tell client to silently hide
+        if (suggestion?.no_provider) {
+            return res.status(503).json({
+                no_provider: true,
+                message: "No AI provider configured. Bible suggestions unavailable.",
+            });
+        }
+
+        // _ai_failed: true means all AI failed but static verse was substituted
+        // Return it as success (200) with a flag so client can show 'offline' note
+        return res.json(suggestion);
     } catch (error) {
         console.error("Bible Suggestion Route Error:", error.response?.data || error.message);
         res.status(500).json({ error: error.message || "Failed to find a relevant verse." });
