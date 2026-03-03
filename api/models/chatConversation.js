@@ -19,6 +19,12 @@ const chatConversationSchema = new mongoose.Schema({
 	type: { type: String, enum: ["direct", "group"], default: "direct", index: true },
 	name: { type: String, default: "" },
 	member_ids: [{ type: String, index: true }],
+	// pair_key: canonical sorted identity for a direct conversation.
+	// Format: min(memberA, memberB) + ":" + max(memberA, memberB)
+	// This is set on creation and never mutated.
+	// A partial unique index on (type="direct", pair_key) enforces the single-thread
+	// invariant at the DB level — prevents duplicates even under concurrent writes.
+	pair_key: { type: String, default: "", index: true },
 	created_by: { type: String, required: true },
 	created_at: { type: String, default: () => new Date().toISOString() },
 	updated_at: { type: String, default: () => new Date().toISOString(), index: true },
@@ -32,5 +38,17 @@ const chatConversationSchema = new mongoose.Schema({
 	metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
 });
 
-module.exports = mongoose.model("ChatConversation", chatConversationSchema);
+// Partial unique index: only applies to direct conversations with a non-empty pair_key.
+// For any two users A and B, exactly one direct conversation can ever exist.
+// Group conversations are excluded (type != "direct").
+chatConversationSchema.index(
+	{ type: 1, pair_key: 1 },
+	{
+		unique: true,
+		sparse: true,
+		name: "unique_direct_pair",
+		partialFilterExpression: { type: "direct", pair_key: { $gt: "" } },
+	}
+);
 
+module.exports = mongoose.model("ChatConversation", chatConversationSchema);

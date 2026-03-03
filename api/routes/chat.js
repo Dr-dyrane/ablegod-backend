@@ -8,6 +8,18 @@ const User = require("../models/user");
 const Notification = require("../models/notification");
 const { requireCapabilities, authenticate } = require("../middleware/auth");
 
+/**
+ * normalizePairKey — returns a stable, order-independent key for a direct conversation.
+ * Format: `${minId}:${maxId}` (lexicographic sort ensures A,B == B,A).
+ * Used as the unique DB key to prevent duplicate direct threads.
+ */
+function normalizePairKey(memberA, memberB) {
+	const a = String(memberA || "").trim();
+	const b = String(memberB || "").trim();
+	if (!a || !b) return "";
+	return [a, b].sort().join(":");
+}
+
 function createChatRoutes(pusher) {
 	const router = express.Router();
 
@@ -299,6 +311,45 @@ function createChatRoutes(pusher) {
 		}
 	});
 
+	/**
+	 * GET /conversations/with/:userId
+	 * Returns the canonical direct conversation between the authenticated user and
+	 * the given userId, if one exists. Returns null if none. This endpoint allows
+	 * clients to pre-check for an existing conversation before creating one —
+	 * removing the race window that existed when check and create were separate calls.
+	 */
+	router.get("/conversations/with/:userId", ...requireChatRead, async (req, res) => {
+		try {
+			const authUserId = String(req.auth.user.id);
+			const targetUserId = String(req.params.userId || "").trim();
+
+			if (!targetUserId || targetUserId === authUserId) {
+				return res.status(400).json({ success: false, message: "Invalid target user id" });
+			}
+
+			const pairKey = normalizePairKey(authUserId, targetUserId);
+			const conversation = await ChatConversation.findOne({ type: "direct", pair_key: pairKey });
+
+			return res.json({ success: true, conversation: conversation || null });
+		} catch (error) {
+			console.error("Error looking up conversation by user pair:", error);
+			return res.status(500).json({ success: false, message: "Failed to look up conversation" });
+		}
+	});
+
+	/**
+	 * POST /conversations
+	 * Idempotent conversation creation.
+	 *
+	 * For DIRECT conversations:
+	 *   Uses findOneAndUpdate with upsert:true and $setOnInsert to atomically
+	 *   get-or-create the conversation. The pair_key field uniquely identifies
+	 *   the pair in a DB-level unique index, guaranteeing exactly one record
+	 *   even under concurrent requests from multiple devices or sessions.
+	 *
+	 * For GROUP conversations:
+	 *   Simple insert (no dedup — groups are intentionally user-created).
+	 */
 	router.post("/conversations", ...requireChatSend, async (req, res) => {
 		try {
 			const authUserId = String(req.auth.user.id);
@@ -321,65 +372,106 @@ function createChatRoutes(pusher) {
 				return res.status(400).json({ success: false, message: "Conversation must include at least two members" });
 			}
 
-			// Check if a direct conversation already exists between these members
-			const existingDirect =
-				normalizedType === "direct"
-					? await ChatConversation.findOne({
-						type: "direct",
-						member_ids: { $all: normalizedMembers, $size: 2 },
-					})
-					: null;
-
-			if (existingDirect) {
-				return res.json({ success: true, conversation: existingDirect, existing: true });
-			}
-
-			// Allow unrestricted chat without key envelopes
-			if (!Array.isArray(memberKeyEnvelopes) || memberKeyEnvelopes.length === 0) {
-				// Create unrestricted conversation without encryption
+			if (normalizedType === "direct") {
+				// ATOMIC GET-OR-CREATE via upsert.
+				// The pair_key unique index prevents concurrent duplicate inserts.
+				// $setOnInsert ensures existing records are never mutated by concurrent creates.
+				const pairKey = normalizePairKey(normalizedMembers[0], normalizedMembers[1]);
 				const now = new Date().toISOString();
-				const conversation = new ChatConversation({
-					id: uuidv4(),
-					type: normalizedType,
-					name: String(name || ""),
-					member_ids: normalizedMembers,
-					created_by: authUserId,
-					created_at: now,
-					updated_at: now,
-					member_key_envelopes: [], // Empty for unrestricted chat
-					metadata: metadata,
-				});
+				const newId = uuidv4();
 
-				await conversation.save();
-				return res.json({ success: true, conversation, unrestricted: true });
+				const hasKeyEnvelopes = Array.isArray(memberKeyEnvelopes) && memberKeyEnvelopes.length > 0;
+				const normalizedEnvelopes = hasKeyEnvelopes
+					? memberKeyEnvelopes.map((envelope) => ({
+						user_id: String(envelope.user_id || envelope.userId || ""),
+						key_id: String(envelope.key_id || envelope.keyId || ""),
+						algorithm: String(envelope.algorithm || "ECDH-P256+A256GCM"),
+						encrypted_key: String(envelope.encrypted_key || envelope.encryptedKey || ""),
+						iv: String(envelope.iv || ""),
+						sender_key_id: String(envelope.sender_key_id || envelope.senderKeyId || ""),
+						recipient_key_id: String(envelope.recipient_key_id || envelope.recipientKeyId || ""),
+						created_at: now,
+					}))
+					: [];
+
+				const result = await ChatConversation.findOneAndUpdate(
+					{ type: "direct", pair_key: pairKey },
+					{
+						$setOnInsert: {
+							id: newId,
+							type: "direct",
+							name: String(name || ""),
+							pair_key: pairKey,
+							member_ids: normalizedMembers,
+							created_by: authUserId,
+							created_at: now,
+							updated_at: now,
+							member_key_envelopes: normalizedEnvelopes,
+							metadata: metadata || {},
+						},
+					},
+					{ upsert: true, new: true, setDefaultsOnInsert: true }
+				);
+
+				// Determine if this was an existing or newly created record.
+				// A newly created record will have `id === newId`.
+				const wasExisting = result.id !== newId;
+				return res.json({
+					success: true,
+					conversation: result,
+					existing: wasExisting,
+					unrestricted: !hasKeyEnvelopes,
+				});
 			}
 
+			// GROUP conversation — no dedup (intentionally user-created)
 			const now = new Date().toISOString();
+			const hasKeyEnvelopes = Array.isArray(memberKeyEnvelopes) && memberKeyEnvelopes.length > 0;
 			const conversation = new ChatConversation({
 				id: uuidv4(),
-				type: normalizedType,
+				type: "group",
 				name: String(name || ""),
 				member_ids: normalizedMembers,
+				pair_key: "", // groups have no pair_key
 				created_by: authUserId,
 				created_at: now,
 				updated_at: now,
-				member_key_envelopes: memberKeyEnvelopes.map((envelope) => ({
-					user_id: String(envelope.user_id || envelope.userId || ""),
-					key_id: String(envelope.key_id || envelope.keyId || ""),
-					algorithm: String(envelope.algorithm || "ECDH-P256+A256GCM"),
-					encrypted_key: String(envelope.encrypted_key || envelope.encryptedKey || ""),
-					iv: String(envelope.iv || ""),
-					sender_key_id: String(envelope.sender_key_id || envelope.senderKeyId || ""),
-					recipient_key_id: String(envelope.recipient_key_id || envelope.recipientKeyId || ""),
-					created_at: now,
-				})),
-				metadata,
+				member_key_envelopes: hasKeyEnvelopes
+					? memberKeyEnvelopes.map((envelope) => ({
+						user_id: String(envelope.user_id || envelope.userId || ""),
+						key_id: String(envelope.key_id || envelope.keyId || ""),
+						algorithm: String(envelope.algorithm || "ECDH-P256+A256GCM"),
+						encrypted_key: String(envelope.encrypted_key || envelope.encryptedKey || ""),
+						iv: String(envelope.iv || ""),
+						sender_key_id: String(envelope.sender_key_id || envelope.senderKeyId || ""),
+						recipient_key_id: String(envelope.recipient_key_id || envelope.recipientKeyId || ""),
+						created_at: now,
+					}))
+					: [],
+				metadata: metadata || {},
 			});
 
 			await conversation.save();
-
-			return res.status(201).json({ success: true, conversation });
+			return res.status(201).json({ success: true, conversation, existing: false, unrestricted: !hasKeyEnvelopes });
 		} catch (error) {
+			// Handle MongoDB duplicate key error from the unique index as a successful return
+			// of the existing conversation (race condition safety net).
+			if (error.code === 11000 || (error.message && error.message.includes("duplicate key"))) {
+				try {
+					const authUserId = String(req.auth?.user?.id || "");
+					const raw = Array.isArray(req.body?.memberIds) ? req.body.memberIds : [];
+					const members = [...new Set([authUserId, ...raw.map(String).filter(Boolean)])];
+					if (members.length === 2) {
+						const pairKey = normalizePairKey(members[0], members[1]);
+						const existing = await ChatConversation.findOne({ type: "direct", pair_key: pairKey });
+						if (existing) {
+							return res.json({ success: true, conversation: existing, existing: true });
+						}
+					}
+				} catch (fallbackError) {
+					console.error("Duplicate key fallback failed:", fallbackError);
+				}
+			}
 			console.error("Error creating chat conversation:", error);
 			return res.status(500).json({ success: false, message: "Failed to create conversation" });
 		}
@@ -578,7 +670,11 @@ function createChatRoutes(pusher) {
 
 			emitChatMessage(req.chatConversation, message);
 
-			// Send new message notification to other members
+			// Send new message notification to other members.
+			// type="chat_message" (distinct from "system") allows the client to:
+			//   1. Filter/badge by conversation
+			//   2. Deep-link directly to the conversation on tap
+			//   3. Suppress notifications when the user is viewing that conversation
 			const senderName = [String(req.auth.user.first_name || ""), String(req.auth.user.last_name || "")].filter(Boolean).join(" ").trim() || req.auth.user.username || "Someone";
 
 			for (const memberId of (req.chatConversation.member_ids || [])) {
@@ -587,7 +683,8 @@ function createChatRoutes(pusher) {
 				const notification = new Notification({
 					id: uuidv4(),
 					user_id: String(memberId),
-					type: "system",
+					type: "chat_message",
+					conversation_id: req.chatConversation.id,
 					message: `New message from ${senderName}`,
 					post_id: null,
 					post_title: "",
@@ -596,6 +693,7 @@ function createChatRoutes(pusher) {
 						conversation_id: req.chatConversation.id,
 						sender_id: authUserId,
 						sender_name: senderName,
+						sender_avatar: String(req.auth.user.avatar_url || ""),
 					},
 					is_read: false,
 					created_at: now,
