@@ -4,6 +4,7 @@ const User = require("../models/user");
 const StreamPost = require("../models/streamPost");
 const { authenticate } = require("../middleware/auth");
 const axios = require("axios");
+const { v2: cloudinary } = require("cloudinary");
 
 const router = express.Router();
 
@@ -308,13 +309,96 @@ router.post("/writing-assistant", authenticate, withAISettings, async (req, res)
     }
 });
 
-// Generate images (OpenAI DALL-E)
+// Generate images (OpenAI DALL-E → uploaded to Cloudinary)
 router.post("/image-gen", authenticate, withAISettings, async (req, res) => {
-    const { prompt } = req.body;
+    // Accept either a raw prompt OR structured content context
+    const rawPrompt = String(req.body?.prompt || "").trim();
+    const content = String(req.body?.content || "").trim();
+    const intent = String(req.body?.intent || "Reflection").trim();
+    const title = String(req.body?.title || "").trim();
+
+    // Build a photographic/cinematic scene prompt — no text, no quote cards
+    let finalPrompt;
+    if (content || title) {
+        const scene = (title || content).slice(0, 220);
+        const intentLower = intent.toLowerCase();
+        const mood =
+            intentLower === "prayer" ? "peaceful, reverent, cinematic prayer atmosphere" :
+                intentLower === "testimony" ? "joyful, triumphant, warm light, life transformation" :
+                    intentLower === "reflection" ? "contemplative, tranquil, spiritual depth" :
+                        intentLower === "question" ? "thoughtful, searching, morning light, open horizon" :
+                            intentLower === "encouragement" ? "uplifting, hopeful, golden light, community" :
+                                "spiritual, serene, cinematic";
+        finalPrompt = [
+            `A photorealistic artistic photograph or cinematic painting illustrating the theme: "${scene}".`,
+            `Mood: ${mood}.`,
+            "Style: professional photography, natural lighting, rich colours, faith atmosphere.",
+            "No text, no words, no captions, no banners, no overlays.",
+        ].join(" ");
+    } else if (rawPrompt) {
+        // Strip any prompt that already contains quote/banner language
+        const sanitised = rawPrompt
+            .replace(/quote\s*card|banner|text\s*overlay|overlay/gi, "scene")
+            .slice(0, 400);
+        finalPrompt = `${sanitised}. No text, no words, no overlays, photorealistic cinematic style.`;
+    } else {
+        return res.status(400).json({ success: false, error: "prompt, content, or title is required" });
+    }
 
     try {
-        const image_url = await AIService.generateImage(prompt, req.aiSettings);
-        res.json({ image_url });
+        // Step 1: Generate image URL from DALL-E (or SVG fallback)
+        const rawResult = await AIService.generateImage(finalPrompt, req.aiSettings);
+
+        // Step 2: If it's a data: URL (SVG fallback), return preview-only — do NOT store as post image
+        if (String(rawResult || "").startsWith("data:")) {
+            return res.json({
+                image_url: null,           // never embed data: URLs in posts
+                fallback_preview: rawResult, // for in-composer preview only
+                is_fallback: true,
+                message: "AI image provider unavailable. Preview shown but not attached to post.",
+            });
+        }
+
+        // Step 3: Upload the DALL-E URL to Cloudinary so we own the permanent URL
+        let cloudinaryUrl = null;
+        try {
+            const cloudinaryUrlStr = process.env.CLOUDINARY_URL || "";
+            const cloudName = process.env.CLOUDINARY_CLOUD_NAME || "";
+            const apiKey = process.env.CLOUDINARY_API_KEY || "";
+            const apiSecret = process.env.CLOUDINARY_API_SECRET || "";
+            const isConfigured = !!(cloudinaryUrlStr || (cloudName && apiKey && apiSecret));
+
+            if (isConfigured) {
+                if (cloudinaryUrlStr) {
+                    cloudinary.config({ cloudinary_url: cloudinaryUrlStr });
+                } else {
+                    cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret, secure: true });
+                }
+                const uploadResult = await cloudinary.uploader.upload(rawResult, {
+                    folder: "ablegod/ai-generated",
+                    resource_type: "image",
+                    overwrite: false,
+                    timeout: 25000,
+                });
+                cloudinaryUrl = uploadResult?.secure_url || null;
+            }
+        } catch (uploadErr) {
+            console.error("Cloudinary upload of AI image failed:", uploadErr?.message || uploadErr);
+            // Return DALL-E URL as fallback if Cloudinary fails — better than nothing
+            // Frontend will show it but warn the user it may expire
+            return res.json({
+                image_url: rawResult,
+                cloudinary_url: null,
+                is_temporary: true,
+                message: "Image generated but could not be permanently stored. URL may expire.",
+            });
+        }
+
+        return res.json({
+            image_url: cloudinaryUrl || rawResult,
+            cloudinary_url: cloudinaryUrl,
+            is_temporary: !cloudinaryUrl,
+        });
     } catch (error) {
         console.error("Image Gen Error:", error.response?.data || error.message);
         res.status(500).json({ error: error.message || "Failed to generate image." });
