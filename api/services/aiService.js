@@ -501,7 +501,10 @@ class AIService {
         // Fallback: Pollinations is keyless and highly reliable.
         try {
             console.info("Image generation: Falling back to Pollinations.ai (Keyless Backup)");
+            const start = Date.now();
             const { buffer, contentType } = await generateImageViaPollinations(safePrompt);
+            const duration = Date.now() - start;
+            console.info(`[Fallback Success] Pollinations.ai image generated in ${duration}ms.`);
             return {
                 url: null,
                 buffer,
