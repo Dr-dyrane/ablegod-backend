@@ -660,6 +660,124 @@ function mountAdminRoutes(router, { requireStreamModerate, requireStreamFeature,
         }
     });
 
+    // ─── POST /admin/bulk-moderation ───
+    router.post("/bulk-moderation", ...requireStreamModerate, async (req, res) => {
+        try {
+            const { item_ids, action, reason, note } = req.body;
+            if (!Array.isArray(item_ids) || item_ids.length === 0) {
+                return res.status(400).json({ success: false, message: "item_ids must be a non-empty array" });
+            }
+            if (!["approve", "block", "review", "clear"].includes(action)) {
+                return res.status(400).json({ success: false, message: "Invalid moderation action" });
+            }
+
+            const authUser = req.auth.user;
+            const now = new Date().toISOString();
+            const results = { posts: [], replies: [], errors: [] };
+
+            // Process each item
+            for (const id of item_ids) {
+                try {
+                    // Check if it's a post or reply (heuristically or by looking up both)
+                    const post = await StreamPost.findOne({ id });
+                    if (post) {
+                        const metadata = ensureMetadataObject(post);
+                        const nextStatus = action === "approve" || action === "clear" ? "" :
+                            action === "block" ? "blocked" : "review";
+
+                        if (nextStatus) metadata.moderation_status = nextStatus;
+                        else delete metadata.moderation_status;
+
+                        if (action === "approve" || action === "clear") {
+                            metadata.report_count = 0;
+                            metadata.report_events = [];
+                            await markReportsForTarget({ targetType: "post", targetId: id, authUser, status: "resolved" });
+                        } else {
+                            await markReportsForTarget({ targetType: "post", targetId: id, authUser, status: "under_review" });
+                        }
+
+                        post.updated_at = now;
+                        await post.save();
+
+                        await createModerationActionRecord({
+                            targetType: "post", targetId: id, postId: id, action,
+                            status: nextStatus || "clear", reason, note, authUser
+                        });
+                        results.posts.push(id);
+                        continue;
+                    }
+
+                    const reply = await StreamReply.findOne({ id });
+                    if (reply) {
+                        const metadata = ensureMetadataObject(reply);
+                        const nextStatus = action === "approve" || action === "clear" ? "" :
+                            action === "block" ? "blocked" : "review";
+
+                        if (nextStatus) metadata.moderation_status = nextStatus;
+                        else delete metadata.moderation_status;
+
+                        if (action === "block") reply.status = "blocked";
+                        else if (action === "approve" || action === "clear") reply.status = "published";
+
+                        if (action === "approve" || action === "clear") {
+                            await markReportsForTarget({ targetType: "reply", targetId: id, authUser, status: "resolved" });
+                        } else {
+                            await markReportsForTarget({ targetType: "reply", targetId: id, authUser, status: "under_review" });
+                        }
+
+                        reply.updated_at = now;
+                        await reply.save();
+
+                        await createModerationActionRecord({
+                            targetType: "reply", targetId: id, postId: reply.post_id, replyId: id,
+                            action, status: nextStatus || "clear", reason, note, authUser
+                        });
+                        results.replies.push(id);
+                        continue;
+                    }
+
+                    results.errors.push({ id, message: "Item not found" });
+                } catch (itemError) {
+                    console.error(`Error processing bulk item ${id}:`, itemError);
+                    results.errors.push({ id, message: itemError.message });
+                }
+            }
+
+            return res.json({
+                success: true,
+                message: `Bulk moderation complete: ${results.posts.length} posts, ${results.replies.length} replies processed.`,
+                results
+            });
+        } catch (error) {
+            console.error("Error in bulk moderation:", error);
+            return res.status(500).json({ success: false, message: "Failed to perform bulk moderation" });
+        }
+    });
+
+    // ─── GET /admin/audit-log ───
+    router.get("/audit-log", ...requireStreamModerate, async (req, res) => {
+        try {
+            const limit = Math.min(Number(req.query.limit) || 50, 200);
+            const cursor = req.query.cursor;
+
+            const query = cursor ? { created_at: { $lt: cursor } } : {};
+
+            const actions = await require("./_helpers").StreamModerationAction
+                .find(query)
+                .sort({ created_at: -1 })
+                .limit(limit);
+
+            return res.json({
+                success: true,
+                actions: actions.map(serializeModerationAction),
+                next_cursor: actions.length === limit ? actions[actions.length - 1].created_at : null
+            });
+        } catch (error) {
+            console.error("Error fetching moderation audit log:", error);
+            return res.status(500).json({ success: false, message: "Failed to fetch audit log" });
+        }
+    });
+
     router.patch("/admin/posts/:id/feature", ...requireStreamFeature, async (req, res) => {
         try {
             const postId = String(req.params.id || "");

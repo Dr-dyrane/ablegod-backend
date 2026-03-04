@@ -22,36 +22,34 @@ const TIMEOUT_TEXT_AI = 20_000;   // Writing / bible verse / moderation
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STATIC_VERSES_BY_INTENT = {
-    prayer: {
-        verse: "The effective, fervent prayer of a righteous man avails much.",
-        reference: "James 5:16",
-        version: "NKJV",
-    },
-    reflection: {
-        verse: "Be still, and know that I am God; I will be exalted among the nations.",
-        reference: "Psalm 46:10",
-        version: "NKJV",
-    },
-    encouragement: {
-        verse: "I can do all things through Christ who strengthens me.",
-        reference: "Philippians 4:13",
-        version: "NKJV",
-    },
-    testimony: {
-        verse: "And they overcame him by the blood of the Lamb and by the word of their testimony.",
-        reference: "Revelation 12:11",
-        version: "NKJV",
-    },
-    question: {
-        verse: "Trust in the Lord with all your heart, and lean not on your own understanding.",
-        reference: "Proverbs 3:5",
-        version: "NKJV",
-    },
-    default: {
-        verse: "For God so loved the world that He gave His only begotten Son, that whoever believes in Him should not perish but have everlasting life.",
-        reference: "John 3:16",
-        version: "NKJV",
-    },
+    prayer: [
+        { verse: "The effective, fervent prayer of a righteous man avails much.", reference: "James 5:16", version: "NKJV" },
+        { verse: "Call to Me, and I will answer you, and show you great and mighty things, which you do not know.", reference: "Jeremiah 33:3", version: "NKJV" },
+        { verse: "Pray without ceasing.", reference: "1 Thessalonians 5:17", version: "NKJV" }
+    ],
+    reflection: [
+        { verse: "Be still, and know that I am God; I will be exalted among the nations.", reference: "Psalm 46:10", version: "NKJV" },
+        { verse: "Search me, O God, and know my heart; try me, and know my anxieties.", reference: "Psalm 139:23", version: "NKJV" },
+        { verse: "Thy word is a lamp unto my feet, and a light unto my path.", reference: "Psalm 119:105", version: "NKJV" }
+    ],
+    encouragement: [
+        { verse: "I can do all things through Christ who strengthens me.", reference: "Philippians 4:13", version: "NKJV" },
+        { verse: "The Lord is my shepherd; I shall not want.", reference: "Psalm 23:1", version: "NKJV" },
+        { verse: "But those who wait on the Lord shall renew their strength; they shall mount up with wings like eagles.", reference: "Isaiah 40:31", version: "NKJV" }
+    ],
+    testimony: [
+        { verse: "And they overcame him by the blood of the Lamb and by the word of their testimony.", reference: "Revelation 12:11", version: "NKJV" },
+        { verse: "Oh, taste and see that the Lord is good; Blessed is the man who trusts in Him!", reference: "Psalm 34:8", version: "NKJV" }
+    ],
+    question: [
+        { verse: "Trust in the Lord with all your heart, and lean not on your own understanding.", reference: "Proverbs 3:5", version: "NKJV" },
+        { verse: "If any of you lacks wisdom, let him ask of God, who gives to all liberally and without reproach.", reference: "James 1:5", version: "NKJV" }
+    ],
+    default: [
+        { verse: "For God so loved the world that He gave His only begotten Son, that whoever believes in Him should not perish but have everlasting life.", reference: "John 3:16", version: "NKJV" },
+        { verse: "I am the way, the truth, and the life. No one comes to the Father except through Me.", reference: "John 14:6", version: "NKJV" },
+        { verse: "Let everything that has breath praise the Lord. Praise the Lord!", reference: "Psalm 150:6", version: "NKJV" }
+    ],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -151,13 +149,25 @@ function detectIntent(content = "") {
  */
 function getStaticVerseFallback(content = "", count = 1) {
     const intent = detectIntent(content);
-    const primary = STATIC_VERSES_BY_INTENT[intent] || STATIC_VERSES_BY_INTENT.default;
+    const options = STATIC_VERSES_BY_INTENT[intent] || STATIC_VERSES_BY_INTENT.default;
+
+    // Pick a random primary
+    const randomIndex = Math.floor(Math.random() * options.length);
+    const primary = options[randomIndex];
+
     if (count <= 1) return { ...primary, _fallback: true };
-    // For multiple, return primary + john3:16 as a second option
-    const john = STATIC_VERSES_BY_INTENT.default;
-    const suggestions = intent === "default"
-        ? [primary, STATIC_VERSES_BY_INTENT.encouragement]
-        : [primary, john];
+
+    // For multiple, return primary + one random from default (ensuring it's different if possible)
+    const defaultOptions = STATIC_VERSES_BY_INTENT.default;
+    const secondary = defaultOptions[Math.floor(Math.random() * defaultOptions.length)];
+
+    // If we happened to pick the same, try one from encouragement
+    let finalSecondary = secondary;
+    if (secondary.verse === primary.verse) {
+        finalSecondary = STATIC_VERSES_BY_INTENT.encouragement[0];
+    }
+
+    const suggestions = [primary, finalSecondary];
     return { suggestions: suggestions.slice(0, count).map((v) => ({ ...v, _fallback: true })), _fallback: true };
 }
 
@@ -473,46 +483,45 @@ class AIService {
 
         let dalleError = null;
 
-        // ── Tier 1: DALL-E 3 ──────────────────────────────────────────────
-        if (openai_key) {
+        // ── Tier 1: OpenAI DALL-E 3 ──────────────────────────────────────
+        // Priority: try DALL-E if key exists, as it provides the highest quality
+        if (openai_key && openai_key.startsWith("sk-")) {
             try {
+                console.info("Image generation: Attempting DALL-E 3...");
                 const url = await generateImageViaDalle(safePrompt, openai_key);
                 return { url, source: "dalle", is_temporary: true };
             } catch (error) {
                 dalleError = error;
-                const label = isQuotaOrBillingError(error)
-                    ? "[QUOTA/BILLING]"
-                    : isNetworkError(error)
-                        ? "[NETWORK TIMEOUT]"
-                        : "[ERROR]";
-                console.error(`DALL-E 3 ${label}:`, extractProviderErrorMessage(error));
-                // Fall through to Pollinations
+                const label = isQuotaOrBillingError(error) ? "[QUOTA]" : isNetworkError(error) ? "[TIMEOUT]" : "[ERROR]";
+                console.warn(`DALL-E 3 fallback triggered ${label}:`, extractProviderErrorMessage(error));
             }
-        } else {
-            console.info("No OpenAI key — skipping DALL-E, using Pollinations fallback.");
         }
 
-        // ── Tier 2: Pollinations.ai (keyless) ────────────────────────────
+        // ── Tier 2: Community Backup (Pollinations.ai) ───────────────────
+        // Fallback: Pollinations is keyless and highly reliable.
         try {
-            console.info("Image generation: using Pollinations.ai fallback");
+            console.info("Image generation: Falling back to Pollinations.ai (Keyless Backup)");
             const { buffer, contentType } = await generateImageViaPollinations(safePrompt);
             return {
-                url: null,            // no URL — caller must upload the buffer
-                buffer,               // raw bytes for Cloudinary upload
+                url: null,
+                buffer,
                 contentType,
                 source: "pollinations",
-                is_temporary: false,  // once uploaded to Cloudinary it's permanent
+                is_temporary: false,
+                _is_backup: true
             };
         } catch (pollinationsError) {
-            console.error("Pollinations.ai fallback failed:", extractProviderErrorMessage(pollinationsError));
+            console.error("Critical: All image providers failed.", extractProviderErrorMessage(pollinationsError));
 
-            // Both failed — throw with the most informative message
-            const baseMsg = dalleError
-                ? (isQuotaOrBillingError(dalleError)
-                    ? "OpenAI image quota reached."
-                    : extractProviderErrorMessage(dalleError))
-                : "No image provider available.";
-            throw new Error(`${baseMsg} Pollinations fallback also failed.`);
+            // Build the most helpful diagnostic message
+            let errMsg = "All image generation services are currently unavailable.";
+            if (dalleError && isQuotaOrBillingError(dalleError)) {
+                errMsg = "OpenAI image quota reached, and community backup failed.";
+            } else if (!openai_key) {
+                errMsg = "No OpenAI key provided, and community backup failed.";
+            }
+
+            throw new Error(`${errMsg} Details: ${extractProviderErrorMessage(pollinationsError)}`);
         }
     }
 

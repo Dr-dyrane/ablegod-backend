@@ -32,6 +32,7 @@
 		"pusher": "^5.3.2",
 		"socket.io": "^4.8.1",
 		"uuid": "^9.0.1",
+		"web-push": "^3.6.7",
 		"xml": "^1.0.1"
 	},
 	"devDependencies": {

@@ -11,11 +11,18 @@ function mountFollowRoutes(router, { requireFollowRead, requireFollowWrite, emit
     router.get("/follows/me", ...requireFollowRead, async (req, res) => {
         try {
             const authUserId = String(req.auth?.user?.id || "");
-            const snapshot = await buildFollowSnapshot(authUserId);
+            const [snapshot, postCount] = await Promise.all([
+                buildFollowSnapshot(authUserId),
+                StreamPost.countDocuments({ author_user_id: authUserId, status: "published" }),
+            ]);
             return res.json({
                 success: true, user_id: authUserId,
                 following: snapshot.following, followers: snapshot.followers,
-                counts: { following: snapshot.following.length, followers: snapshot.followers.length },
+                counts: {
+                    following: snapshot.following.length,
+                    followers: snapshot.followers.length,
+                    posts: postCount
+                },
             });
         } catch (error) {
             console.error("Error fetching follow snapshot:", error);

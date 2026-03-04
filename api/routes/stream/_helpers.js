@@ -157,6 +157,7 @@ const serializeModerationAction = (action) => ({
     action_scope: String(action.action_scope || "moderation"),
     action: String(action.action || ""),
     status: String(action.status || ""),
+    reason: String(action.reason || ""),
     note: String(action.note || ""),
     actor_user_id: String(action.actor_user_id || ""),
     actor_name: String(action.actor_name || "Admin"),
@@ -507,7 +508,7 @@ const markReportsForTarget = async ({ targetType, targetId, authUser, status }) 
 
 const createModerationActionRecord = async ({
     targetType, targetId, postId, replyId = null,
-    actionScope = "moderation", action, status, note, authUser, metadata = {},
+    actionScope = "moderation", action, status, reason, note, authUser, metadata = {},
 }) => {
     const now = new Date().toISOString();
     return new StreamModerationAction({
@@ -519,6 +520,7 @@ const createModerationActionRecord = async ({
         action_scope: String(actionScope || "moderation"),
         action: String(action || ""),
         status: String(status || ""),
+        reason: String(reason || ""),
         note: String(note || ""),
         actor_user_id: String(authUser?.id || ""),
         actor_name: getAuthDisplayName(authUser, "Admin"),

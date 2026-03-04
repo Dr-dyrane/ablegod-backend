@@ -71,6 +71,7 @@ function createStreamRoutes(pusher) {
     require("./analytics")(router, ctx);
     require("./circles")(router, ctx);
     require("./admin")(router, ctx);
+    require("./users")(router, ctx);
 
     return router;
 }

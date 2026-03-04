@@ -10,6 +10,7 @@ const streamModerationActionSchema = new mongoose.Schema(
 		action_scope: { type: String, default: "moderation" }, // moderation | feature
 		action: String,
 		status: String,
+		reason: String,
 		note: String,
 		actor_user_id: { type: String, index: true },
 		actor_name: String,

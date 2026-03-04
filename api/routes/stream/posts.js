@@ -58,6 +58,9 @@ function mountPostRoutes(router, { requireFeedRead, requirePostCreate, requirePo
             // search parameters
             const q = req.query.q ? String(req.query.q).trim() : null;
             const tag = req.query.tag ? String(req.query.tag).trim().toLowerCase() : null;
+            // author filter — used by public profile page to fetch one user's posts
+            const authorUserId = req.query.author_user_id ? String(req.query.author_user_id).trim() : null;
+            if (authorUserId) { query.author_user_id = authorUserId; }
             if (q) {
                 query.$text = { $search: q };
             }
