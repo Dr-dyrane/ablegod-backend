@@ -1,6 +1,7 @@
 const express = require("express");
-const { v4: uuidv4 } = require("uuid");
 const Notification = require("../models/notification");
+const PushSubscription = require("../models/pushSubscription");
+const notificationService = require("../services/notificationService");
 const { authenticate } = require("../middleware/auth");
 
 function createNotificationRoutes(pusher) {
@@ -10,28 +11,6 @@ function createNotificationRoutes(pusher) {
 
 	const canAccessUserNotifications = (authUser, targetUserId) =>
 		String(authUser?.id) === String(targetUserId) || isPrivileged(authUser);
-
-	const emitNotificationEvent = (notification) => {
-		if (!pusher) return;
-		const payload = {
-			id: notification.id,
-			type: notification.type,
-			message: notification.message,
-			post_id: notification.post_id ?? null,
-			post_title: notification.post_title || "",
-			is_read: notification.is_read,
-			created_at: notification.created_at,
-			user_id: notification.user_id,
-			metadata: notification.metadata || {},
-		};
-
-		pusher.trigger(`user-${notification.user_id}`, "notification:new", payload);
-		pusher.trigger("notifications", "receiveNotification", {
-			message: notification.message,
-			userId: notification.user_id,
-			type: notification.type,
-		});
-	};
 
 	router.get("/", authenticate, async (req, res) => {
 		try {
@@ -67,6 +46,7 @@ function createNotificationRoutes(pusher) {
 				postId,
 				post_title,
 				postTitle,
+				conversation_id,
 				metadata = {},
 			} = req.body || {};
 
@@ -80,26 +60,68 @@ function createNotificationRoutes(pusher) {
 				return res.status(403).json({ success: false, message: "Insufficient permissions" });
 			}
 
-			const notification = new Notification({
-				id: uuidv4(),
+			const saved = await notificationService.createAndEmit({
 				user_id: targetUserId,
-				type: String(type || "system"),
-				message: String(message).trim(),
-				post_id: typeof post_id === "number" ? post_id : (typeof postId === "number" ? postId : null),
-				post_title: String(post_title || postTitle || ""),
+				type,
+				message,
+				post_id,
+				postId,
+				post_title,
+				postTitle,
+				conversation_id,
 				metadata,
-				is_read: false,
-				created_at: new Date().toISOString(),
-				read_at: null,
-			});
-
-			const saved = await notification.save();
-			emitNotificationEvent(saved);
+			}, pusher);
 
 			return res.status(201).json({ success: true, notification: saved });
 		} catch (error) {
 			console.error("Error creating notification:", error);
 			return res.status(500).json({ success: false, message: "Failed to create notification" });
+		}
+	});
+
+	// Push Subscription Endpoints
+	router.post("/push-subscription", authenticate, async (req, res) => {
+		try {
+			const authUser = req.auth.user;
+			const { subscription, device_label } = req.body;
+
+			if (!subscription || !subscription.endpoint) {
+				return res.status(400).json({ success: false, message: "Invalid subscription object" });
+			}
+
+			await PushSubscription.findOneAndUpdate(
+				{ user_id: authUser.id, "subscription.endpoint": subscription.endpoint },
+				{
+					user_id: authUser.id,
+					subscription,
+					device_label: device_label || "Primary device",
+					updated_at: new Date().toISOString()
+				},
+				{ upsert: true, new: true }
+			);
+
+			return res.json({ success: true, message: "Push subscription registered" });
+		} catch (error) {
+			console.error("Error saving push subscription:", error);
+			return res.status(500).json({ success: false, message: "Failed to save push subscription" });
+		}
+	});
+
+	router.delete("/push-subscription", authenticate, async (req, res) => {
+		try {
+			const authUser = req.auth.user;
+			const { endpoint } = req.query;
+
+			if (!endpoint) {
+				return res.status(400).json({ success: false, message: "endpoint is required" });
+			}
+
+			await PushSubscription.deleteOne({ user_id: authUser.id, "subscription.endpoint": endpoint });
+
+			return res.json({ success: true, message: "Push subscription removed" });
+		} catch (error) {
+			console.error("Error removing push subscription:", error);
+			return res.status(500).json({ success: false, message: "Failed to remove push subscription" });
 		}
 	});
 
@@ -159,4 +181,6 @@ function createNotificationRoutes(pusher) {
 }
 
 module.exports = createNotificationRoutes;
+
+
 

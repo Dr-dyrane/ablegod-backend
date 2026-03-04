@@ -6,6 +6,7 @@ const ChatIdentityKey = require("../models/chatIdentityKey");
 const StreamReport = require("../models/streamReport");
 const User = require("../models/user");
 const Notification = require("../models/notification");
+const notificationService = require("../services/notificationService");
 const { requireCapabilities, authenticate } = require("../middleware/auth");
 
 /**
@@ -88,22 +89,6 @@ function createChatRoutes(pusher) {
 			conversation_id: conversation.id,
 			message,
 		});
-	};
-
-	const emitNotificationEvent = (notification) => {
-		if (!pusher || !notification?.user_id) return;
-		const payload = {
-			id: notification.id,
-			type: notification.type,
-			message: notification.message,
-			post_id: notification.post_id ?? null,
-			post_title: notification.post_title || "",
-			is_read: notification.is_read,
-			created_at: notification.created_at,
-			user_id: notification.user_id,
-			metadata: notification.metadata || {},
-		};
-		pusher.trigger(`user-${notification.user_id}`, "notification:new", payload);
 	};
 
 	const getAuthDisplayName = (authUser, fallback = "Member") =>
@@ -700,7 +685,7 @@ function createChatRoutes(pusher) {
 				});
 
 				await notification.save().catch(console.error);
-				emitNotificationEvent(notification);
+				await notificationService.emitNotification(notification, pusher);
 			}
 
 			return res.status(201).json({ success: true, message });
